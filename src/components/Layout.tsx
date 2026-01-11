@@ -1,47 +1,28 @@
-import React from "react";
-import { NavLink } from "react-router-dom";
-import { supabase } from "../supabaseClient";
+import { NavLink, Outlet } from "react-router-dom";
 
-export default function Layout({ children }: { children: React.ReactNode }) {
-  async function signOut() {
-    await supabase.auth.signOut();
-  }
+const linkStyle = ({ isActive }: { isActive: boolean }) =>
+  "tab" + (isActive ? " tabActive" : "");
 
+export default function Layout() {
   return (
     <div className="appShell">
-      <header className="topbar">
-        <div className="brand">Inventory Manager</div>
+      <div className="topBar">
+        <div className="brand">Already Dead</div>
 
         <nav className="tabs">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Dashboard
-          </NavLink>
-          <NavLink to="/inventory" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Inventory
-          </NavLink>
-          <NavLink to="/sales" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Sales
-          </NavLink>
-          <NavLink to="/tracking" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Tracking
-          </NavLink>
-          <NavLink to="/calendar" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Sales Calendar
-          </NavLink>
-          <NavLink to="/new-product" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            New Product
-          </NavLink>
-
-          {/* ✅ NEW TAB */}
-          <NavLink to="/import" className={({ isActive }) => (isActive ? "tab active" : "tab")}>
-            Import/Export
-          </NavLink>
+          <NavLink className={linkStyle} to="/">Dashboard</NavLink>
+          <NavLink className={linkStyle} to="/inventory">Inventory</NavLink>
+          <NavLink className={linkStyle} to="/sales">Sales</NavLink>
+          <NavLink className={linkStyle} to="/tracking">Tracking</NavLink>
+          <NavLink className={linkStyle} to="/calendar">Sales Calendar</NavLink>
+          <NavLink className={linkStyle} to="/new-product">New Product</NavLink>
+          <NavLink className={linkStyle} to="/cloud-sync">Cloud Sync</NavLink>
         </nav>
+      </div>
 
-        <button className="btn" onClick={signOut}>Sign out</button>
-      </header>
-
-      <main className="content">{children}</main>
+      <main className="content">
+        <Outlet />
+      </main>
     </div>
   );
 }
