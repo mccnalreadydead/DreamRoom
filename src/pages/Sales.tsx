@@ -1,126 +1,245 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-type RawRow = Record<string, unknown>;
-
 type SaleRow = {
-  id: string;
-  date: string;
-  unitsSold: number;
-  profit: number;
-  note: string;
+  id: number;
+  date: string | null; // YYYY-MM-DD
+  item: string;
+  units_sold: number | null;
+  profit: number | null;
+  note: string | null;
 };
 
-function num(v: unknown): number {
-  const n = Number((v ?? 0) as any);
-  return Number.isFinite(n) ? n : 0;
+function toNum(v: any) {
+  if (v == null || v === "") return null;
+  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
-function normalizeSale(r: RawRow): SaleRow {
-  const date = String((r as any).date ?? (r as any).Date ?? "").trim();
-
-  const idRaw =
-    (r as any).id ??
-    (r as any).uuid ??
-    (r as any).ID ??
-    (r as any).Id ??
-    `${date}-${Math.random()}`;
-
-  return {
-    id: String(idRaw),
-    date,
-    unitsSold: num((r as any).units_sold ?? (r as any).unitsSold ?? (r as any)["Units Sold"] ?? (r as any).UnitsSold),
-    profit: num((r as any).profit ?? (r as any).Profit ?? (r as any)["Total Profit"] ?? (r as any)["Total Profit "]),
-    note: String((r as any).note ?? (r as any).Note ?? "").trim(),
-  };
+function yyyy(dateStr: string | null) {
+  if (!dateStr) return null;
+  return dateStr.slice(0, 4);
+}
+function mm(dateStr: string | null) {
+  if (!dateStr) return null;
+  return dateStr.slice(5, 7);
 }
 
 export default function Sales() {
   const [rows, setRows] = useState<SaleRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [msg, setMsg] = useState<string>("");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
 
-  async function loadSales(): Promise<void> {
-    setMsg("");
-    setLoading(true);
+  // Form
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [item, setItem] = useState("");
+  const [unitsSold, setUnitsSold] = useState("1");
+  const [profit, setProfit] = useState("");
+  const [note, setNote] = useState("");
 
-    const res = await supabase.from("sales").select("*");
+  // Filters
+  const [yearFilter, setYearFilter] = useState<string>("All");
+  const [monthFilter, setMonthFilter] = useState<string>("All");
 
-    if (res.error) {
-      console.error(res.error);
-      setMsg(`Error loading sales: ${res.error.message}`);
-      setRows([]);
-      setLoading(false);
+  async function load() {
+    setError("");
+    setStatus("Loading sales...");
+
+    const { data, error } = await supabase
+      .from("Sales") // IMPORTANT: capital S to match your table name
+      .select("id,date,item,units_sold,profit,note")
+      .order("date", { ascending: false })
+      .limit(2000);
+
+    if (error) {
+      setError(error.message);
+      setStatus("");
       return;
     }
 
-    const normalized: SaleRow[] = (res.data ?? [])
-      .map((r: any) => normalizeSale(r as RawRow))
-      .filter((r: SaleRow) => r.date);
-
-    normalized.sort((a: SaleRow, b: SaleRow) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-
-    setRows(normalized);
-    setLoading(false);
+    setRows((data as SaleRow[]) ?? []);
+    setStatus(`Loaded ${data?.length ?? 0} sale(s).`);
   }
 
   useEffect(() => {
-    void loadSales();
+    load();
   }, []);
 
-  const totals = useMemo(() => {
-    const totalUnits = rows.reduce((s: number, r: SaleRow) => s + num(r.unitsSold), 0);
-    const totalProfit = rows.reduce((s: number, r: SaleRow) => s + num(r.profit), 0);
-    return { totalUnits, totalProfit };
+  async function addSale() {
+    setError("");
+    setStatus("");
+
+    const payload = {
+      date: date || null,
+      item: item.trim(),
+      units_sold: Math.trunc(toNum(unitsSold) ?? 0),
+      profit: toNum(profit),
+      note: note.trim() || null,
+    };
+
+    if (!payload.item) {
+      setError("Item is required.");
+      return;
+    }
+    if (!payload.date) {
+      setError("Date is required.");
+      return;
+    }
+
+    setStatus("Saving sale...");
+    const { error } = await supabase.from("Sales").insert([payload]);
+    if (error) {
+      setError(error.message);
+      setStatus("");
+      return;
+    }
+
+    setStatus("✅ Saved. Refreshing...");
+    setItem("");
+    setUnitsSold("1");
+    setProfit("");
+    setNote("");
+    await load();
+  }
+
+  const availableYears = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      const y = yyyy(r.date);
+      if (y) set.add(y);
+    }
+    return ["All", ...Array.from(set).sort((a, b) => b.localeCompare(a))];
   }, [rows]);
 
-  if (loading) return <div className="page muted">Loading sales…</div>;
+  const availableMonths = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      const m = mm(r.date);
+      if (m) set.add(m);
+    }
+    // 01..12
+    const months = Array.from(set).sort();
+    return ["All", ...months];
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    return rows.filter((r) => {
+      const y = yyyy(r.date);
+      const m = mm(r.date);
+      if (yearFilter !== "All" && y !== yearFilter) return false;
+      if (monthFilter !== "All" && m !== monthFilter) return false;
+      return true;
+    });
+  }, [rows, yearFilter, monthFilter]);
+
+  const totalProfitFiltered = useMemo(() => {
+    return filtered.reduce((sum, r) => sum + Number(r.profit || 0), 0);
+  }, [filtered]);
+
+  const totalProfitAllTime = useMemo(() => {
+    return rows.reduce((sum, r) => sum + Number(r.profit || 0), 0);
+  }, [rows]);
 
   return (
-    <div className="page">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>Sales</h1>
-        <button className="btn" onClick={() => void loadSales()}>Refresh</button>
-      </div>
+    <div style={{ padding: 16, maxWidth: 1100 }}>
+      <h2>Sales</h2>
 
-      {msg && <div className="card" style={{ marginTop: 12 }}>{msg}</div>}
+      {status && <p>{status}</p>}
+      {error && <p style={{ color: "salmon" }}>{error}</p>}
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <span className="pill">Total Units Sold: {totals.totalUnits}</span>
-          <span className="pill">
-            Total Profit: ${totals.totalProfit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          </span>
+      <div style={{ display: "grid", gap: 10, maxWidth: 620 }}>
+        <h3>Add Sale</h3>
+
+        <label>
+          Date
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Item
+          <input value={item} onChange={(e) => setItem(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Units sold
+          <input value={unitsSold} onChange={(e) => setUnitsSold(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Profit (your profit for this sale)
+          <input value={profit} onChange={(e) => setProfit(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Note (optional)
+          <input value={note} onChange={(e) => setNote(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={addSale}>Save Sale</button>
+          <button onClick={load}>Refresh</button>
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <table className="table">
+      <hr style={{ margin: "16px 0" }} />
+
+      <h3>Filter</h3>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <label>
+          Year:&nbsp;
+          <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Month:&nbsp;
+          <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+            {availableMonths.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div style={{ opacity: 0.9 }}>
+          Filtered profit: <b>{totalProfitFiltered.toFixed(2)}</b> &nbsp;|&nbsp; All-time profit:{" "}
+          <b>{totalProfitAllTime.toFixed(2)}</b>
+        </div>
+      </div>
+
+      <hr style={{ margin: "16px 0" }} />
+
+      <h3>Sales Records ({filtered.length})</h3>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={{ width: 140 }}>Date</th>
-              <th style={{ width: 140 }}>Units</th>
-              <th style={{ width: 160 }}>Profit</th>
-              <th>Note</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Date</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Item</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Units</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Profit</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Note</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r: SaleRow) => (
+            {filtered.map((r) => (
               <tr key={r.id}>
-                <td>{r.date}</td>
-                <td>{r.unitsSold}</td>
-                <td>${num(r.profit).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                <td>{r.note}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.date ?? ""}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.item}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.units_sold ?? ""}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.profit ?? ""}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.note ?? ""}</td>
               </tr>
             ))}
           </tbody>
         </table>
-
-        {rows.length === 0 && (
-          <div className="muted" style={{ marginTop: 12 }}>
-            No sales rows found. Import your Excel again.
-          </div>
-        )}
       </div>
     </div>
   );

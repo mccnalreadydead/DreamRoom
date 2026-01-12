@@ -1,179 +1,158 @@
+<h1 style={{ padding: 20 }}>✅ INVENTORY UPDATED RIGHT NOW</h1>
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-type RawRow = Record<string, unknown>;
-
-type InventoryRow = {
-  id: string; // always store as string for safety
+type InvRow = {
+  id: number;
   item: string;
-  qty: number;
-  unitCost: number;
-  resalePrice: number;
-  profit: number;
+  qty: number | null;
+  unit_cost: number | null;
+  resale_price: number | null;
 };
 
-function num(v: unknown): number {
-  const n = Number((v ?? 0) as any);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function money(v: unknown): string {
-  const n = num(v);
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-}
-
-function normalizeRow(r: RawRow): InventoryRow {
-  const item = String((r as any).item ?? "").trim();
-
-  const idRaw =
-    (r as any).id ??
-    (r as any).uuid ??
-    (r as any).ID ??
-    (r as any).Id ??
-    item;
-
-  return {
-    id: String(idRaw),
-    item,
-    qty: num((r as any).qty ?? (r as any).Qty ?? (r as any).QTY ?? (r as any).quantity ?? (r as any).Quantity),
-    unitCost: num((r as any).unit_cost ?? (r as any).unitCost ?? (r as any).cost ?? (r as any).Cost),
-    resalePrice: num((r as any).resale_price ?? (r as any).resalePrice ?? (r as any)["Used Sell Price"] ?? (r as any)["Used Sell"]),
-    profit: num((r as any).profit ?? (r as any).Profit),
-  };
+function toNum(v: any) {
+  if (v == null || v === "") return null;
+  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 export default function Inventory() {
-  const [rows, setRows] = useState<InventoryRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string>("");
+  const [rows, setRows] = useState<InvRow[]>([]);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
 
-  async function loadInventory(): Promise<void> {
-    setMsg("");
-    setLoading(true);
+  // Form
+  const [item, setItem] = useState("");
+  const [qty, setQty] = useState("1");
+  const [unitCost, setUnitCost] = useState("");
+  const [resalePrice, setResalePrice] = useState("");
 
-    const res = await supabase.from("inventory").select("*");
+  async function load() {
+    setError("");
+    setStatus("Loading inventory...");
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("id,item,qty,unit_cost,resale_price")
+      .order("id", { ascending: false })
+      .limit(500);
 
-    if (res.error) {
-      console.error(res.error);
-      setMsg(`Error loading inventory: ${res.error.message}`);
-      setRows([]);
-      setLoading(false);
+    if (error) {
+      setError(error.message);
+      setStatus("");
       return;
     }
 
-    const normalized: InventoryRow[] = (res.data ?? [])
-      .map((r: any) => normalizeRow(r as RawRow))
-      .filter((r: InventoryRow) => r.item);
-
-    normalized.sort((a: InventoryRow, b: InventoryRow) => a.item.localeCompare(b.item));
-
-    setRows(normalized);
-    setLoading(false);
+    setRows((data as InvRow[]) ?? []);
+    setStatus(`Loaded ${data?.length ?? 0} item(s).`);
   }
 
   useEffect(() => {
-    void loadInventory();
+    load();
   }, []);
 
-  const lowStockIds = useMemo<Set<string>>(() => {
-    const s = new Set<string>();
-    for (const r of rows) if ((r.qty ?? 0) < 5) s.add(r.id);
-    return s;
-  }, [rows]);
+  async function addItem() {
+    setError("");
+    setStatus("");
 
-  function onQtyChange(id: string, value: string): void {
-    const next = num(value);
-    setRows((prev: InventoryRow[]) => prev.map((r: InventoryRow) => (r.id === id ? { ...r, qty: next } : r)));
-  }
+    const payload = {
+      item: item.trim(),
+      qty: toNum(qty) ?? 0,
+      unit_cost: toNum(unitCost),
+      resale_price: toNum(resalePrice),
+    };
 
-  async function saveQty(id: string, nextQty: number): Promise<void> {
-    setMsg("");
-    setSavingId(id);
-
-    // try update by id (most common)
-    const res = await supabase.from("inventory").update({ qty: nextQty }).eq("id", id);
-
-    setSavingId(null);
-
-    if (res.error) {
-      console.error(res.error);
-      setMsg(`Could not save qty: ${res.error.message}`);
+    if (!payload.item) {
+      setError("Item name is required.");
       return;
     }
 
-    setRows((prev: InventoryRow[]) => prev.map((r: InventoryRow) => (r.id === id ? { ...r, qty: nextQty } : r)));
+    setStatus("Saving item...");
+    const { error } = await supabase.from("inventory").insert([payload]);
+    if (error) {
+      setError(error.message);
+      setStatus("");
+      return;
+    }
+
+    setStatus("✅ Saved. Refreshing...");
+    setItem("");
+    setQty("1");
+    setUnitCost("");
+    setResalePrice("");
+    await load();
   }
 
-  if (loading) return <div className="page muted">Loading inventory…</div>;
+  const totalInventoryValue = useMemo(() => {
+    // Not “profit”, just quick inventory value estimate (resale_price * qty)
+    return rows.reduce((sum, r) => sum + (Number(r.resale_price || 0) * Number(r.qty || 0)), 0);
+  }, [rows]);
 
   return (
-    <div className="page">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>Inventory</h1>
-        <button className="btn" onClick={() => void loadInventory()}>Refresh</button>
+    <div style={{ padding: 16, maxWidth: 1100 }}>
+      <h2>Inventory</h2>
+
+      {status && <p>{status}</p>}
+      {error && <p style={{ color: "salmon" }}>{error}</p>}
+
+      <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
+        <h3>Add Inventory Item</h3>
+
+        <label>
+          Item name
+          <input value={item} onChange={(e) => setItem(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Qty
+          <input value={qty} onChange={(e) => setQty(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Unit cost (what you paid)
+          <input value={unitCost} onChange={(e) => setUnitCost(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <label>
+          Resale price (target sell price)
+          <input value={resalePrice} onChange={(e) => setResalePrice(e.target.value)} style={{ width: "100%" }} />
+        </label>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={addItem}>Save Item</button>
+          <button onClick={load}>Refresh</button>
+        </div>
       </div>
 
-      {msg && <div className="card" style={{ marginTop: 12 }}>{msg}</div>}
+      <hr style={{ margin: "16px 0" }} />
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <table className="table">
+      <p style={{ opacity: 0.85 }}>
+        Estimated resale value (resale_price × qty): <b>{totalInventoryValue.toFixed(2)}</b>
+      </p>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              <th style={{ width: "42%" }}>Item</th>
-              <th style={{ width: 140 }}>Qty</th>
-              <th style={{ width: 140 }}>Unit Cost</th>
-              <th style={{ width: 140 }}>Resell</th>
-              <th style={{ width: 140 }}>Profit</th>
-              <th style={{ width: 120 }}>Save</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>ID</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Item</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Qty</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Unit Cost</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #444" }}>Resale Price</th>
             </tr>
           </thead>
-
           <tbody>
-            {rows.map((r: InventoryRow) => {
-              const low = lowStockIds.has(r.id);
-              return (
-                <tr key={r.id} style={low ? { outline: "2px solid rgba(255,0,0,0.35)" } : undefined}>
-                  <td>
-                    <div style={{ fontWeight: 700 }}>{r.item}</div>
-                    {low && <div className="muted" style={{ marginTop: 2 }}>Low stock</div>}
-                  </td>
-
-                  <td>
-                    <input
-                      type="number"
-                      value={r.qty ?? 0}
-                      onChange={(e) => onQtyChange(r.id, e.target.value)}
-                      className="input"
-                      style={{ width: "100%" }}
-                    />
-                  </td>
-
-                  <td>{money(r.unitCost)}</td>
-                  <td>{money(r.resalePrice)}</td>
-                  <td>{money(r.profit)}</td>
-
-                  <td>
-                    <button
-                      className="btn primary"
-                      onClick={() => void saveQty(r.id, Number(r.qty ?? 0))}
-                      disabled={savingId === r.id}
-                      style={{ width: "100%" }}
-                    >
-                      {savingId === r.id ? "Saving…" : "Save"}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.id}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.item}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.qty ?? ""}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.unit_cost ?? ""}</td>
+                <td style={{ padding: 6, borderBottom: "1px solid #333" }}>{r.resale_price ?? ""}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
-
-        {rows.length === 0 && (
-          <div className="muted" style={{ marginTop: 12 }}>
-            No inventory rows found. Import your Excel again.
-          </div>
-        )}
       </div>
     </div>
   );
