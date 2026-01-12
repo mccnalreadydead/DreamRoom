@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import ImportExport from "./ImportExport";
 
 type Row = Record<string, any>;
 
@@ -42,7 +43,6 @@ export default function Dashboard() {
   }, []);
 
   const metrics = useMemo(() => {
-    // Inventory (normalized): { item, qty, unitCost, profit }
     const qtyInStock = inventory.reduce((s, r) => s + toNumber(r.qty), 0);
 
     const inventoryCost = inventory.reduce(
@@ -50,20 +50,22 @@ export default function Dashboard() {
       0
     );
 
-    // In your inventory sheet, "Profit" is treated as the profit potential for that row
-    // (often already total profit for that item line)
     const inventoryProfitPotential = inventory.reduce(
       (s, r) => s + toNumber(r.profit),
       0
     );
 
-    // ✅ Estimated Earnings if everything sells:
-    // total sell value ≈ cost + profit
     const estimatedEarnings = inventoryCost + inventoryProfitPotential;
 
-    // Sales (normalized): { date, unitsSold, profit }
-    const totalUnitsSold = sales.reduce((s, r) => s + toNumber(r.unitsSold), 0);
-    const totalProfit = sales.reduce((s, r) => s + toNumber(r.profit), 0);
+    const totalUnitsSold = sales.reduce(
+      (s, r) => s + toNumber(r.unitsSold),
+      0
+    );
+
+    const totalProfit = sales.reduce(
+      (s, r) => s + toNumber(r.profit),
+      0
+    );
 
     return {
       qtyInStock,
@@ -77,8 +79,19 @@ export default function Dashboard() {
 
   return (
     <div className="page">
-      {/* ✅ BIG TITLE */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ padding: 12, border: "2px solid red", marginBottom: 12 }}>
+  ✅ DASHBOARD FILE UPDATED (TEST)
+</div>
+
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
         <div>
           <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: 2 }}>
             ALREADY DEAD
@@ -88,30 +101,44 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <button className="btn" onClick={reload}>Refresh</button>
+        <button className="btn" onClick={reload}>
+          Refresh
+        </button>
       </div>
 
+      {/* KPIs */}
       <div className="grid3" style={{ marginTop: 14 }}>
         <div className="card">
           <div className="kpiLabel">Qty in Stock</div>
-          <div className="kpiValue">{metrics.qtyInStock.toLocaleString()}</div>
+          <div className="kpiValue">
+            {metrics.qtyInStock.toLocaleString()}
+          </div>
           <div className="muted">
-            Inventory rows: <span className="pill">{inventory.length}</span>
+            Inventory rows:{" "}
+            <span className="pill">{inventory.length}</span>
           </div>
         </div>
 
         <div className="card">
           <div className="kpiLabel">Inventory Cost Value</div>
           <div className="kpiValue">
-            ${metrics.inventoryCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            $
+            {metrics.inventoryCost.toLocaleString(undefined, {
+              maximumFractionDigits: 2,
+            })}
           </div>
           <div className="muted">qty × unitCost</div>
         </div>
 
         <div className="card">
-          <div className="kpiLabel">Total Profit (from Transaction Log)</div>
+          <div className="kpiLabel">
+            Total Profit (from Transaction Log)
+          </div>
           <div className="kpiValue">
-            ${metrics.totalProfit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            $
+            {metrics.totalProfit.toLocaleString(undefined, {
+              maximumFractionDigits: 2,
+            })}
           </div>
           <div className="muted">
             Sales rows: <span className="pill">{sales.length}</span>
@@ -119,37 +146,61 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ✅ NEW SECTION */}
+      {/* Secondary KPIs */}
       <div className="grid2" style={{ marginTop: 14 }}>
         <div className="card">
-          <div className="kpiLabel">Estimated Earnings (if all inventory sells)</div>
+          <div className="kpiLabel">
+            Estimated Earnings (if all inventory sells)
+          </div>
           <div className="kpiValue">
-            ${metrics.estimatedEarnings.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            $
+            {metrics.estimatedEarnings.toLocaleString(undefined, {
+              maximumFractionDigits: 2,
+            })}
           </div>
           <div className="muted">
-            Calculation: Inventory Cost Value + Inventory Profit Potential
+            Inventory Cost Value + Inventory Profit Potential
           </div>
 
-          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ marginTop: 10 }}>
             <span className="pill">
-              Profit potential: ${metrics.inventoryProfitPotential.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              Profit potential: $
+              {metrics.inventoryProfitPotential.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}
             </span>
           </div>
         </div>
 
         <div className="card">
-          <div className="kpiLabel">Units Sold (from Transaction Log)</div>
-          <div className="kpiValue">{metrics.totalUnitsSold.toLocaleString()}</div>
-          <div className="muted">Uses “unitsSold” from imported sales</div>
+          <div className="kpiLabel">Units Sold</div>
+          <div className="kpiValue">
+            {metrics.totalUnitsSold.toLocaleString()}
+          </div>
+          <div className="muted">
+            Uses “unitsSold” from imported sales
+          </div>
         </div>
       </div>
 
+      {/* IMPORT / EXPORT — THIS WAS MISSING */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h2 style={{ marginTop: 0 }}>Import / Export</h2>
+        <p className="muted">
+          Upload your Excel file to update Inventory and Sales.
+        </p>
+        <ImportExport />
+      </div>
+
+      {/* Debug */}
       <div className="card" style={{ marginTop: 14 }}>
         <h2 style={{ marginTop: 0 }}>Debug</h2>
         <p className="muted" style={{ margin: 0 }}>
-          If any numbers look wrong, re-import using <b>Import/Export → IMPORT ALL</b>.
+          If numbers look wrong, re-import using{" "}
+          <b>Import / Export → Import Excel</b>.
           <br />
-          Keys used: <span className="pill">inventory</span> and <span className="pill">sales</span>
+          Keys used: <span className="pill">inventory</span> and{" "}
+          <span className="pill">sales</span>
         </p>
       </div>
     </div>

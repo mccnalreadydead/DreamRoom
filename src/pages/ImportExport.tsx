@@ -1,25 +1,27 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
-/* ------------------ helpers ------------------ */
+type Row = Record<string, any>;
 
-function dispatchUpdate() {
+function safeParse<T>(v: string | null, fallback: T): T {
+  try {
+    return v ? (JSON.parse(v) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key: string, value: any) {
+  localStorage.setItem(key, JSON.stringify(value));
   window.dispatchEvent(new Event("ad-storage-updated"));
 }
 
-function saveRows(key: string, rows: any[]) {
-  localStorage.setItem(key, JSON.stringify(rows));
-}
-
-function loadRows(key: string) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+function normalizeHeader(h: any) {
+  return String(h ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
 }
 
 function toNumber(v: any) {
@@ -30,207 +32,174 @@ function toNumber(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Excel serial date (45989) OR "45989" -> YYYY-MM-DD
-function excelDateToISO(v: any) {
-  if (typeof v === "number" && v > 20000) {
-    const ms = Math.round((v - 25569) * 86400 * 1000);
-    const d = new Date(ms);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  }
+function excelDateToISO(n: number) {
+  // Excel serial date -> ISO yyyy-mm-dd
+  const ms = Math.round((n - 25569) * 86400 * 1000);
+  const d = new Date(ms);
+  return d.toISOString().slice(0, 10);
+}
 
+function normalizeDate(v: any) {
+  if (typeof v === "number" && v > 20000) return excelDateToISO(v);
   if (typeof v === "string") {
     const s = v.trim();
-    if (/^\d+(\.\d+)?$/.test(s)) {
-      const n = Number(s);
-      if (Number.isFinite(n) && n > 20000) return excelDateToISO(n);
-    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
     return s;
-  }
-
-  return String(v ?? "").trim();
-}
-
-// Trim column names (your Excel has trailing spaces)
-function cleanKeys(row: any) {
-  const out: any = {};
-  Object.keys(row || {}).forEach((k) => {
-    out[String(k).trim()] = row[k];
-  });
-  return out;
-}
-
-function sheetToRows(wb: XLSX.WorkBook, sheetName: string) {
-  const ws = wb.Sheets[sheetName];
-  if (!ws) return [];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" }) as any[];
-  return rows.map(cleanKeys);
-}
-
-function findSheet(wb: XLSX.WorkBook, includes: string[]) {
-  const names = wb.SheetNames || [];
-  const lower = names.map((n) => ({ raw: n, l: n.toLowerCase().trim() }));
-  for (const inc of includes) {
-    const hit = lower.find((x) => x.l.includes(inc));
-    if (hit) return hit.raw;
   }
   return "";
 }
 
-/* ------------------ NORMALIZERS (your exact Excel) ------------------ */
+function sheetToObjects(ws: XLSX.WorkSheet) {
+  const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+  if (!rows.length) return [];
 
-function normalizeInventory(rows: any[]) {
-  // Your columns: Item name, QTY, Cost, Profit, etc.
-  return rows
-    .filter((r) => String(r["Item name"] ?? "").trim() !== "")
-    .map((r) => ({
-      item: String(r["Item name"] ?? "").trim(),
-      qty: toNumber(r["QTY"]),
-      unitCost: toNumber(r["Cost"]),
-      profit: toNumber(r["Profit"]),
-    }));
+  const headers = (rows[0] ?? []).map(normalizeHeader);
+  const out: Row[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || r.every((c) => c == null || String(c).trim() === "")) continue;
+    const obj: Row = {};
+    headers.forEach((h, idx) => (obj[h || `col_${idx}`] = r[idx]));
+    out.push(obj);
+  }
+  return out;
 }
-
-function normalizeSales(rows: any[]) {
-  // Your sheet: Transaction Log
-  // Columns: Date, SM7b, SM7db, TLM103, U87, Total Profit, units sold
-  return rows
-    .filter((r) => r["Date"] != null && r["Date"] !== "")
-    .map((r) => {
-      const productCols = ["SM7b", "SM7db", "TLM103", "U87"];
-      const sumUnits = productCols.reduce((s, k) => s + toNumber(r[k]), 0);
-      const unitsSold = toNumber(r["units sold"]) || sumUnits;
-
-      return {
-        date: excelDateToISO(r["Date"]),
-        unitsSold,
-        profit: toNumber(r["Total Profit"]),
-        source: "import",
-      };
-    });
-}
-
-/* ------------------ COMPONENT ------------------ */
 
 export default function ImportExport() {
   const [file, setFile] = useState<File | null>(null);
-  const [wb, setWb] = useState<XLSX.WorkBook | null>(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  const counts = useMemo(() => {
-    return {
-      inventory: loadRows("inventory").length,
-      sales: loadRows("sales").length,
-      tracking: loadRows("tracking").length,
-    };
-  }, [msg, err]);
+  const existingCounts = useMemo(() => {
+    const inv = safeParse<any[]>(localStorage.getItem("inventory"), []);
+    const sales = safeParse<any[]>(localStorage.getItem("sales"), []);
+    return { inv: inv.length, sales: sales.length };
+  }, []);
 
-  async function chooseFile(f: File) {
-    setErr("");
+  async function importExcel() {
     setMsg("");
-    setFile(f);
+    setErr("");
+    if (!file) return setErr("Pick an Excel file first.");
 
     try {
-      const buf = await f.arrayBuffer();
-      const book = XLSX.read(buf, { type: "array" });
-      setWb(book);
-      setMsg(`Loaded workbook. Sheets: ${book.SheetNames.join(", ")}`);
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+
+      // Read all sheets
+      const bySheet: Record<string, Row[]> = {};
+      for (const name of wb.SheetNames) {
+        const ws = wb.Sheets[name];
+        bySheet[name.toLowerCase()] = sheetToObjects(ws);
+      }
+
+      // Try to locate inventory + sales sheets by name
+      const invSheet =
+        bySheet["inventory"] ||
+        bySheet["inv"] ||
+        bySheet["items"] ||
+        bySheet["current_inventory"] ||
+        [];
+
+      const salesSheet =
+        bySheet["sales"] ||
+        bySheet["transaction_logs"] ||
+        bySheet["transactions"] ||
+        bySheet["sold"] ||
+        [];
+
+      // Normalize inventory rows into fields used by our app
+      const inventory = invSheet.map((r) => {
+        const name =
+          r.name ?? r.item ?? r.product ?? r.title ?? r.sku ?? r.description ?? "";
+        const qty = toNumber(r.qty ?? r.quantity ?? r.onhand ?? r.stock ?? 0);
+        const unitCost = toNumber(r.unitcost ?? r.cost ?? r.wholesale ?? r.buyprice ?? 0);
+        const resale = toNumber(r.resell ?? r.resale ?? r.sellprice ?? r.price ?? 0);
+
+        return {
+          name: String(name || "").trim(),
+          qty,
+          unitCost,
+          resale,
+          ...r,
+        };
+      }).filter((x) => x.name);
+
+      // Normalize sales rows
+      const sales = salesSheet.map((r) => {
+        const date = normalizeDate(r.date ?? r.saledate ?? r.sold_on ?? r.time ?? "");
+        const item = String(r.item ?? r.name ?? r.product ?? r.title ?? "").trim();
+        const unitsSold = toNumber(r.unitssold ?? r.qty ?? r.quantity ?? 1);
+        const priceEach = toNumber(r.priceeach ?? r.price ?? r.soldfor ?? r.saleprice ?? 0);
+        const revenue = toNumber(r.revenue ?? r.total ?? unitsSold * priceEach);
+        const profit = toNumber(r.profit ?? 0);
+        const note = String(r.note ?? r.notes ?? r.comment ?? "").trim();
+
+        return {
+          date,
+          item,
+          unitsSold,
+          priceEach,
+          revenue,
+          profit,
+          note,
+          source: "excel",
+          ...r,
+        };
+      }).filter((x) => x.item || x.date);
+
+      // Save into localStorage
+      save("inventory", inventory);
+      save("sales", sales);
+
+      setMsg(
+        `✅ Imported Excel.\nInventory rows: ${inventory.length}\nSales rows: ${sales.length}`
+      );
     } catch (e: any) {
-      setWb(null);
-      setErr(e?.message || String(e));
+      setErr(e?.message || "Import failed.");
     }
-  }
-
-  function importAll() {
-    setErr("");
-    setMsg("");
-    if (!wb) return setMsg("Choose a file first.");
-
-    const invSheet = findSheet(wb, ["inventory"]);
-    const salesSheet = findSheet(wb, ["transaction"]);
-
-    const invRaw = invSheet ? sheetToRows(wb, invSheet) : [];
-    const salesRaw = salesSheet ? sheetToRows(wb, salesSheet) : [];
-
-    const inventory = normalizeInventory(invRaw);
-    const sales = normalizeSales(salesRaw);
-
-    saveRows("inventory", inventory);
-    saveRows("sales", sales);
-
-    dispatchUpdate();
-
-    setMsg(
-      `✅ IMPORT COMPLETE
-Inventory: ${inventory.length} rows (sheet "${invSheet || "NOT FOUND"}")
-Sales: ${sales.length} rows (sheet "${salesSheet || "NOT FOUND"}")`
-    );
-  }
-
-  function clearAll() {
-    localStorage.removeItem("inventory");
-    localStorage.removeItem("sales");
-    localStorage.removeItem("tracking");
-    dispatchUpdate();
-    setMsg("Cleared inventory/sales/tracking from local storage.");
-    setErr("");
   }
 
   return (
     <div className="page">
       <h1>Import / Export</h1>
 
-      <div className="card">
-        {/* ✅ ALWAYS VISIBLE FILE PICKER */}
-        <label className="label">Upload Excel file</label>
+      <div className="card" style={{ padding: 16 }}>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Upload your Excel file. This will update Inventory + Sales in the app.
+        </p>
+
+        <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+          <div className="muted">Current saved data on this device:</div>
+          <div style={{ fontWeight: 800, marginTop: 4 }}>
+            Inventory: {existingCounts.inv} rows • Sales: {existingCounts.sales} rows
+          </div>
+        </div>
 
         <input
           type="file"
           accept=".xlsx,.xls"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) chooseFile(f);
-          }}
-          style={{
-            display: "block",
-            width: "100%",
-            padding: "10px",
-            borderRadius: "10px",
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "rgba(255,255,255,0.06)",
-            color: "white",
-          }}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
 
-        <div className="muted" style={{ marginTop: 10 }}>
-          Selected: <span className="pill">{file ? file.name : "none"}</span>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-          <button className="btn primary" onClick={importAll} disabled={!wb}>
-            IMPORT ALL
-          </button>
-          <button className="btn" onClick={clearAll}>
-            Clear Saved Data
+        <div style={{ marginTop: 12 }}>
+          <button className="btn primary" onClick={importExcel}>
+            Import Excel
           </button>
         </div>
 
-        {(msg || err) && (
-          <div className="card" style={{ marginTop: 14 }}>
-            {msg && <p className="muted" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{msg}</p>}
-            {err && <p style={{ margin: 0, color: "salmon" }}>❌ {err}</p>}
+        {msg && (
+          <pre className="card" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+            {msg}
+          </pre>
+        )}
+        {err && (
+          <div className="card" style={{ marginTop: 12, color: "salmon" }}>
+            ❌ {err}
           </div>
         )}
-
-        <p className="muted" style={{ marginTop: 12 }}>
-          Saved rows →
-          <span className="pill" style={{ marginLeft: 8 }}>inventory: {counts.inventory}</span>
-          <span className="pill" style={{ marginLeft: 8 }}>sales: {counts.sales}</span>
-          <span className="pill" style={{ marginLeft: 8 }}>tracking: {counts.tracking}</span>
-        </p>
       </div>
     </div>
   );

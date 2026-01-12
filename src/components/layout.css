@@ -1,0 +1,49 @@
+.app-shell {
+  min-height: 100vh;
+  background: #0b0b0f;
+  color: #fff;
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #222;
+  background: #0e0e14;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 12px;
+}
+
+.nav-links a {
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: #bbb;
+}
+
+.nav-links a.active {
+  background: #1a1a24;
+  color: #fff;
+}
+
+.logout-btn {
+  background: transparent;
+  color: #ff6b6b;
+  border: 1px solid #ff6b6b;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.main-content {
+  padding: 20px;
+}

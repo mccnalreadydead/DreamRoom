@@ -11,21 +11,28 @@ import Sales from "./pages/Sales";
 import Tracking from "./pages/Tracking";
 import CalendarPage from "./pages/CalendarPage";
 import NewProduct from "./pages/NewProduct";
+import ImportExport from "./pages/ImportExport";
 import CloudSync from "./pages/CloudSync";
 
-type RequireAuthProps = {
-  session: any;
-  children: React.ReactNode;
-};
+function isLocalModeEnabled() {
+  return localStorage.getItem("ad_local_mode") === "1";
+}
 
-function RequireAuth({ session, children }: RequireAuthProps) {
-  if (!session) return <Navigate to="/login" replace />;
+function RequireAuth({
+  isAuthed,
+  children,
+}: {
+  isAuthed: boolean;
+  children: React.ReactNode;
+}) {
+  if (!isAuthed) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 export default function App() {
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
+  const [localMode, setLocalMode] = useState(isLocalModeEnabled());
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }: { data: any }) => {
@@ -33,25 +40,34 @@ export default function App() {
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: any, newSession: any) => {
-        setSession(newSession);
-      }
-    );
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: any, newSession: any) => {
+      setSession(newSession);
+    });
 
-    return () => sub.subscription.unsubscribe();
+    // update local mode if Login page sets it
+    const onStorage = () => setLocalMode(isLocalModeEnabled());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("ad-local-mode", onStorage as any);
+
+    return () => {
+      sub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("ad-local-mode", onStorage as any);
+    };
   }, []);
+
+  const isAuthed = !!session || localMode;
 
   if (loading) return <div className="center">Loading…</div>;
 
   return (
     <Routes>
-      <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={isAuthed ? <Navigate to="/" replace /> : <Login />} />
 
       <Route
         path="/"
         element={
-          <RequireAuth session={session}>
+          <RequireAuth isAuthed={isAuthed}>
             <Layout />
           </RequireAuth>
         }
@@ -62,6 +78,7 @@ export default function App() {
         <Route path="tracking" element={<Tracking />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="new-product" element={<NewProduct />} />
+        <Route path="import-export" element={<ImportExport />} />
         <Route path="cloud-sync" element={<CloudSync />} />
       </Route>
 
