@@ -1,206 +1,218 @@
 import { useEffect, useMemo, useState } from "react";
-import ImportExport from "./ImportExport";
+import { supabase } from "../supabaseClient";
 
-type Row = Record<string, any>;
+type InvRow = {
+  id: number;
+  item: string;
+  qty: number | null;
+  unit_cost: number | null;
+  resale_price: number | null;
+};
 
-function load(key: string): Row[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+type SaleRow = {
+  id: number;
+  date: string | null; // YYYY-MM-DD
+  item: string;
+  units_sold: number | null;
+  profit: number | null;
+};
 
-function toNumber(v: any) {
-  if (v == null) return 0;
-  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
+function money(n: number) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function Dashboard() {
-  const [inventory, setInventory] = useState<Row[]>([]);
-  const [sales, setSales] = useState<Row[]>([]);
+  const [inv, setInv] = useState<InvRow[]>([]);
+  const [sales, setSales] = useState<SaleRow[]>([]);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
 
-  function reload() {
-    setInventory(load("inventory"));
-    setSales(load("sales"));
+  async function load() {
+    setError("");
+    setStatus("Loading dashboard stats...");
+
+    const [{ data: invData, error: invErr }, { data: salesData, error: salesErr }] = await Promise.all([
+      supabase
+        .from("inventory")
+        .select("id,item,qty,unit_cost,resale_price")
+        .order("id", { ascending: false })
+        .limit(2000),
+      supabase
+        .from("Sales")
+        .select("id,date,item,units_sold,profit")
+        .order("date", { ascending: false })
+        .limit(5000),
+    ]);
+
+    if (invErr) {
+      setError(invErr.message);
+      setStatus("");
+      return;
+    }
+    if (salesErr) {
+      setError(salesErr.message);
+      setStatus("");
+      return;
+    }
+
+    setInv((invData as InvRow[]) ?? []);
+    setSales((salesData as SaleRow[]) ?? []);
+    setStatus("✅ Dashboard updated.");
   }
 
   useEffect(() => {
-    reload();
-    const onUpdate = () => reload();
-    window.addEventListener("ad-storage-updated", onUpdate);
-    window.addEventListener("storage", onUpdate);
-    return () => {
-      window.removeEventListener("ad-storage-updated", onUpdate);
-      window.removeEventListener("storage", onUpdate);
-    };
+    load();
   }, []);
 
-  const metrics = useMemo(() => {
-    const qtyInStock = inventory.reduce((s, r) => s + toNumber(r.qty), 0);
+  const stats = useMemo(() => {
+    const invCount = inv.length;
 
-    const inventoryCost = inventory.reduce(
-      (s, r) => s + toNumber(r.qty) * toNumber(r.unitCost),
+    const totalQty = inv.reduce((sum, r) => sum + Number(r.qty || 0), 0);
+
+    const totalCostBasis = inv.reduce(
+      (sum, r) => sum + Number(r.qty || 0) * Number(r.unit_cost || 0),
       0
     );
 
-    const inventoryProfitPotential = inventory.reduce(
-      (s, r) => s + toNumber(r.profit),
+    const totalResaleValue = inv.reduce(
+      (sum, r) => sum + Number(r.qty || 0) * Number(r.resale_price || 0),
       0
     );
 
-    const estimatedEarnings = inventoryCost + inventoryProfitPotential;
+    const potentialProfit = totalResaleValue - totalCostBasis;
 
-    const totalUnitsSold = sales.reduce(
-      (s, r) => s + toNumber(r.unitsSold),
-      0
-    );
+    const salesCount = sales.length;
+    const totalProfitAllTime = sales.reduce((sum, r) => sum + Number(r.profit || 0), 0);
 
-    const totalProfit = sales.reduce(
-      (s, r) => s + toNumber(r.profit),
-      0
-    );
+    // current month profit
+    const now = new Date();
+    const y = String(now.getFullYear());
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const ym = `${y}-${m}`;
+
+    const profitThisMonth = sales.reduce((sum, r) => {
+      if (!r.date) return sum;
+      if (r.date.slice(0, 7) !== ym) return sum;
+      return sum + Number(r.profit || 0);
+    }, 0);
+
+    // last 6 months summary (profit)
+    const map: Record<string, number> = {};
+    for (const r of sales) {
+      if (!r.date) continue;
+      const key = r.date.slice(0, 7); // YYYY-MM
+      map[key] = (map[key] || 0) + Number(r.profit || 0);
+    }
+    const months = Object.keys(map).sort().slice(-6);
+    const last6 = months.map((k) => ({ month: k, profit: map[k] }));
 
     return {
-      qtyInStock,
-      inventoryCost,
-      inventoryProfitPotential,
-      estimatedEarnings,
-      totalUnitsSold,
-      totalProfit,
+      invCount,
+      totalQty,
+      totalCostBasis,
+      totalResaleValue,
+      potentialProfit,
+      salesCount,
+      totalProfitAllTime,
+      profitThisMonth,
+      last6,
     };
-  }, [inventory, sales]);
+  }, [inv, sales]);
 
   return (
-    <div className="page">
-      <div style={{ padding: 12, border: "2px solid red", marginBottom: 12 }}>
-</div>
+    <div style={{ padding: 16, maxWidth: 1100, margin: "0 auto" }}>
+      <style>{`
+        .grid { display:grid; gap: 12px; }
+        .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .card { border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.04); }
+        .label { opacity: 0.8; font-size: 13px; }
+        .value { font-size: 22px; font-weight: 800; margin-top: 6px; }
+        button { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: inherit; cursor: pointer; }
+        button:hover { background: rgba(255,255,255,0.10); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.10); text-align: left; white-space: nowrap; }
+        .tableWrap { overflow-x:auto; }
+        @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 520px) { .cards { grid-template-columns: 1fr; } }
+      `}</style>
 
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: 2 }}>
-            ALREADY DEAD
-          </div>
-          <div className="muted" style={{ marginTop: 4 }}>
-            Dashboard overview
-          </div>
-        </div>
+      <h2>Dashboard</h2>
+      {status && <p style={{ opacity: 0.85 }}>{status}</p>}
+      {error && <p style={{ color: "salmon" }}>{error}</p>}
 
-        <button className="btn" onClick={reload}>
-          Refresh
-        </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <button onClick={load}>Refresh Stats</button>
       </div>
 
-      {/* KPIs */}
-      <div className="grid3" style={{ marginTop: 14 }}>
+      <div className="grid cards" style={{ marginTop: 12 }}>
         <div className="card">
-          <div className="kpiLabel">Qty in Stock</div>
-          <div className="kpiValue">
-            {metrics.qtyInStock.toLocaleString()}
-          </div>
-          <div className="muted">
-            Inventory rows:{" "}
-            <span className="pill">{inventory.length}</span>
-          </div>
+          <div className="label">Inventory items</div>
+          <div className="value">{stats.invCount}</div>
         </div>
 
         <div className="card">
-          <div className="kpiLabel">Inventory Cost Value</div>
-          <div className="kpiValue">
-            $
-            {metrics.inventoryCost.toLocaleString(undefined, {
-              maximumFractionDigits: 2,
-            })}
-          </div>
-          <div className="muted">qty × unitCost</div>
+          <div className="label">Total units in stock</div>
+          <div className="value">{stats.totalQty}</div>
         </div>
 
         <div className="card">
-          <div className="kpiLabel">
-            Total Profit (from Transaction Log)
-          </div>
-          <div className="kpiValue">
-            $
-            {metrics.totalProfit.toLocaleString(undefined, {
-              maximumFractionDigits: 2,
-            })}
-          </div>
-          <div className="muted">
-            Sales rows: <span className="pill">{sales.length}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Secondary KPIs */}
-      <div className="grid2" style={{ marginTop: 14 }}>
-        <div className="card">
-          <div className="kpiLabel">
-            Estimated Earnings (if all inventory sells)
-          </div>
-          <div className="kpiValue">
-            $
-            {metrics.estimatedEarnings.toLocaleString(undefined, {
-              maximumFractionDigits: 2,
-            })}
-          </div>
-          <div className="muted">
-            Inventory Cost Value + Inventory Profit Potential
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            <span className="pill">
-              Profit potential: $
-              {metrics.inventoryProfitPotential.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
-            </span>
-          </div>
+          <div className="label">Inventory cost basis</div>
+          <div className="value">${money(stats.totalCostBasis)}</div>
         </div>
 
         <div className="card">
-          <div className="kpiLabel">Units Sold</div>
-          <div className="kpiValue">
-            {metrics.totalUnitsSold.toLocaleString()}
-          </div>
-          <div className="muted">
-            Uses “unitsSold” from imported sales
-          </div>
+          <div className="label">Inventory resale value</div>
+          <div className="value">${money(stats.totalResaleValue)}</div>
+        </div>
+
+        <div className="card">
+          <div className="label">Potential profit (resale − cost)</div>
+          <div className="value">${money(stats.potentialProfit)}</div>
+        </div>
+
+        <div className="card">
+          <div className="label">Sales records</div>
+          <div className="value">{stats.salesCount}</div>
+        </div>
+
+        <div className="card">
+          <div className="label">Profit this month</div>
+          <div className="value">${money(stats.profitThisMonth)}</div>
+        </div>
+
+        <div className="card">
+          <div className="label">All-time profit</div>
+          <div className="value">${money(stats.totalProfitAllTime)}</div>
         </div>
       </div>
 
-      {/* IMPORT / EXPORT — THIS WAS MISSING */}
-      <div className="card" style={{ marginTop: 24 }}>
-        <h2 style={{ marginTop: 0 }}>Import / Export</h2>
-        <p className="muted">
-          Upload your Excel file to update Inventory and Sales.
-        </p>
-        <ImportExport />
-      </div>
+      <hr style={{ margin: "16px 0" }} />
 
-      {/* Debug */}
-      <div className="card" style={{ marginTop: 14 }}>
-        <h2 style={{ marginTop: 0 }}>Debug</h2>
-        <p className="muted" style={{ margin: 0 }}>
-          If numbers look wrong, re-import using{" "}
-          <b>Import / Export → Import Excel</b>.
-          <br />
-          Keys used: <span className="pill">inventory</span> and{" "}
-          <span className="pill">sales</span>
-        </p>
+      <h3>Last 6 months profit</h3>
+      <div className="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Profit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.last6.map((r) => (
+              <tr key={r.month}>
+                <td>{r.month}</td>
+                <td>${money(r.profit)}</td>
+              </tr>
+            ))}
+            {!stats.last6.length && (
+              <tr>
+                <td colSpan={2} style={{ opacity: 0.8 }}>
+                  No sales yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

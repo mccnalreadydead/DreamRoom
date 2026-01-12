@@ -8,7 +8,6 @@ import Sales from "./pages/Sales";
 import Tracking from "./pages/Tracking";
 import CalendarPage from "./pages/CalendarPage";
 import NewProduct from "./pages/NewProduct";
-import ImportExport from "./pages/ImportExport";
 import CloudSync from "./pages/CloudSync";
 
 export default function App() {
@@ -21,7 +20,6 @@ export default function App() {
         <Route path="tracking" element={<Tracking />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="new-product" element={<NewProduct />} />
-        <Route path="import-export" element={<ImportExport />} />
         <Route path="cloud-sync" element={<CloudSync />} />
       </Route>
 
