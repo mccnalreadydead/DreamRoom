@@ -1,59 +1,113 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
 
-type Row = Record<string, any>;
+type AnyRow = Record<string, any>;
+
+function toNum(v: any) {
+  if (v == null || v === "") return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function toISODate(v: any) {
+  if (!v) return "";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") {
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  }
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? String(v).trim() : d.toISOString().slice(0, 10);
+}
 
 export default function ImportExport() {
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState("");
 
-  function importAll() {
-    if (!file) return;
+  async function importAll() {
+    setMsg("");
+    if (!file) {
+      setMsg("Pick an Excel file first.");
+      return;
+    }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer);
-      const wb = XLSX.read(data, { type: "array" });
+    const buf = await file.arrayBuffer();
 
-      /* ================= INVENTORY ================= */
-      const invSheet = wb.Sheets["Inventory"];
-      const rawInv: Row[] = invSheet
-        ? XLSX.utils.sheet_to_json(invSheet, { defval: "" })
-        : [];
+    // IMPORTANT: cellDates true so Date comes in as Date objects
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
 
-      const inventory = rawInv.map((r) => ({
-        item: r["Item"] ?? "",
-        qty: Number(r["Qty"] ?? r["Quantity"] ?? 0),
-        unitCost: Number(r["Unit Cost"] ?? r["Cost"] ?? 0),
-        profit: Number(r["Profit"] ?? 0),
-      }));
+    // ✅ EXACT SHEET NAMES FROM YOUR FILE
+    const invWS = wb.Sheets["Inventory "] || wb.Sheets["Inventory"];
+    const txWS = wb.Sheets["Transaction Log"];
 
-      /* ================= SALES ================= */
-      const salesSheet = wb.Sheets["Sales"];
-      const rawSales: Row[] = salesSheet
-        ? XLSX.utils.sheet_to_json(salesSheet, { defval: "" })
-        : [];
+    if (!invWS) {
+      setMsg(`Missing sheet: "Inventory " (with a space). Found: ${wb.SheetNames.join(", ")}`);
+      return;
+    }
+    if (!txWS) {
+      setMsg(`Missing sheet: "Transaction Log". Found: ${wb.SheetNames.join(", ")}`);
+      return;
+    }
 
-      const sales = rawSales.map((r) => ({
-        date: r["Date"] ?? "",
-        item: r["Item"] ?? "",
-        unitsSold: Number(r["Units Sold"] ?? r["Qty"] ?? 0),
-        priceEach: Number(r["Price Each"] ?? 0),
-        revenue: Number(r["Revenue"] ?? 0),
-        profit: Number(r["Profit"] ?? 0),
-      }));
+    // =========================
+    // INVENTORY (Inventory )
+    // headers: Item name, QTY, Cost, Used Sell, Profit
+    // =========================
+    const invRaw = XLSX.utils.sheet_to_json<AnyRow>(invWS, { defval: "" });
 
-      localStorage.setItem("inventory", JSON.stringify(inventory));
-      localStorage.setItem("sales", JSON.stringify(sales));
+    const inventory = invRaw
+      .map((r) => {
+        const item = String(r["Item name"] ?? "").trim();
+        if (!item) return null;
 
-      window.dispatchEvent(new Event("ad-storage-updated"));
+        return {
+          item,
+          qty: toNum(r["QTY"]),
+          unitCost: toNum(r["Cost"]),
+          resalePrice: toNum(r["Used Sell"]),
+          profit: toNum(r["Profit"]),
+        };
+      })
+      .filter(Boolean);
 
-      setMsg(
-        `Imported ${inventory.length} inventory rows and ${sales.length} sales rows`
-      );
-    };
+    // =========================
+    // SALES (Transaction Log)
+    // headers: Date, SM7b, SM7db, TLM103, U87, Total Profit  (note trailing space)
+    // unitsSold = sum of product columns
+    // profit = Total Profit  column
+    // =========================
+    const txRaw = XLSX.utils.sheet_to_json<AnyRow>(txWS, { defval: "" });
 
-    reader.readAsArrayBuffer(file);
+    const sales = txRaw
+      .map((r) => {
+        const date = toISODate(r["Date"]);
+        if (!date) return null;
+
+        const sm7b = toNum(r["SM7b"]);
+        const sm7db = toNum(r["SM7db"]);
+        const tlm103 = toNum(r["TLM103"]);
+        const u87 = toNum(r["U87"]);
+
+        const unitsSold = sm7b + sm7db + tlm103 + u87;
+
+        // ✅ EXACT HEADER: "Total Profit " (with trailing space)
+        const profit = toNum(r["Total Profit "]);
+
+        if (unitsSold === 0 && profit === 0) return null;
+
+        return { date, unitsSold, profit };
+      })
+      .filter(Boolean);
+
+    // SAVE (keys your dashboard reads)
+    localStorage.setItem("inventory", JSON.stringify(inventory));
+    localStorage.setItem("sales", JSON.stringify(sales));
+    window.dispatchEvent(new Event("ad-storage-updated"));
+
+    setMsg(`Imported ${inventory.length} inventory rows and ${sales.length} sales rows.`);
   }
 
   return (
@@ -73,7 +127,7 @@ export default function ImportExport() {
       </div>
 
       {msg && (
-        <pre className="card" style={{ marginTop: 12 }}>
+        <pre className="card" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
           {msg}
         </pre>
       )}
