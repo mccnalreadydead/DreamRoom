@@ -207,3 +207,15 @@ h2{ margin:0 0 10px; font-size:18px; }
 .contentWrap {
   padding: 18px 16px;
 }
+@media (max-width: 720px) {
+  .grid3,
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+
+  .kpiValue {
+    font-size: 28px;
+  }
+}

@@ -80,7 +80,6 @@ export default function Dashboard() {
   return (
     <div className="page">
       <div style={{ padding: 12, border: "2px solid red", marginBottom: 12 }}>
-  ✅ DASHBOARD FILE UPDATED (TEST)
 </div>
 
       {/* Header */}
