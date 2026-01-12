@@ -1,42 +1,54 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
-import "./Layout.css";
+
+function Tab({ to, label }: { to: string; label: string }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        "tab" + (isActive ? " tabActive" : "")
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
 
 export default function Layout() {
-  const navigate = useNavigate();
+  const nav = useNavigate();
 
-  async function logout() {
-    await supabase.auth.signOut();
-    navigate("/login");
+  async function signOut() {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      nav("/login", { replace: true });
+    }
   }
 
   return (
-    <div className="app-shell">
-      <header className="top-nav">
-        <div className="brand">Already Dead</div>
+    <div className="appShell">
+      <div className="topBar">
+        <div className="brandSmall">Already Dead</div>
 
-        <nav className="nav-links">
-          <NavLink to="/" end>Dashboard</NavLink>
-          <NavLink to="/inventory">Inventory</NavLink>
-          <NavLink to="/sales">Sales</NavLink>
-          <NavLink to="/tracking">Tracking</NavLink>
-          <NavLink to="/calendar">Sales Calendar</NavLink>
-          <NavLink to="/new-product">New Product</NavLink>
+        <div className="tabs">
+          <Tab to="/" label="Dashboard" />
+          <Tab to="/inventory" label="Inventory" />
+          <Tab to="/sales" label="Sales" />
+          <Tab to="/tracking" label="Tracking" />
+          <Tab to="/calendar" label="Sales Calendar" />
+          <Tab to="/new-product" label="New Product" />
+          <Tab to="/cloud-sync" label="Cloud Sync" />
+          <Tab to="/import-export" label="Import / Export" />
+        </div>
 
-          {/* ✅ THIS WAS MISSING */}
-          <NavLink to="/import-export">Import / Export</NavLink>
-
-          <NavLink to="/cloud-sync">Cloud Sync</NavLink>
-        </nav>
-
-        <button className="logout-btn" onClick={logout}>
-          Logout
+        <button className="btn" onClick={signOut}>
+          Sign out
         </button>
-      </header>
+      </div>
 
-      <main className="main-content">
+      <div className="contentWrap">
         <Outlet />
-      </main>
+      </div>
     </div>
   );
 }

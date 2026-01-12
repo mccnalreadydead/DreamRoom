@@ -149,3 +149,61 @@ h2{ margin:0 0 10px; font-size:18px; }
 }
 .lowQty { color: #ff5b5b; font-weight: 700; }
 .lowRow td { background: rgba(255, 91, 91, 0.06); }
+/* Layout shell */
+.appShell {
+  min-height: 100vh;
+  background: #0b0d12;
+  color: #e8ecff;
+}
+
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(10, 12, 18, 0.85);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.brandSmall {
+  font-weight: 900;
+  letter-spacing: 1px;
+  opacity: 0.95;
+  margin-right: 8px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1;
+}
+
+.tab {
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  color: rgba(232, 236, 255, 0.85);
+  font-size: 14px;
+}
+
+.tab:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.tabActive {
+  border-color: rgba(160, 130, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(160, 130, 255, 0.10) inset;
+  color: #ffffff;
+}
+
+.contentWrap {
+  padding: 18px 16px;
+}
