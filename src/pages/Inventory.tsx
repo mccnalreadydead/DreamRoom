@@ -1,45 +1,68 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
+type RawRow = Record<string, any>;
+
 type InventoryRow = {
-  id: number;
+  id: any;
   item: string;
   qty: number;
-  unit_cost: number;
-  resale_price: number | null;
+  unitCost: number;
+  resalePrice: number;
   profit: number;
-  note?: string | null;
 };
 
-function money(n: any) {
-  const v = typeof n === "number" ? n : Number(n ?? 0);
-  return `$${(Number.isFinite(v) ? v : 0).toLocaleString(undefined, {
-    maximumFractionDigits: 2,
-  })}`;
+function num(v: any) {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function money(v: any) {
+  const n = num(v);
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function normalizeRow(r: RawRow): InventoryRow {
+  const item =
+    String(r.item ?? r["Item name"] ?? r["Item Name"] ?? r["Item"] ?? "").trim();
+
+  return {
+    id: r.id ?? r.uuid ?? r.ID ?? r.Id ?? item, // fallback key
+    item,
+    qty: num(r.qty ?? r.Qty ?? r.QTY ?? r.quantity ?? r.Quantity),
+    unitCost: num(r.unit_cost ?? r.unitCost ?? r.cost ?? r.Cost),
+    resalePrice: num(r.resale_price ?? r.resalePrice ?? r["Used Sell Price"] ?? r["Used Sell"]),
+    profit: num(r.profit ?? r.Profit),
+  };
 }
 
 export default function Inventory() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState<number | null>(null);
+  const [savingId, setSavingId] = useState<any>(null);
   const [msg, setMsg] = useState("");
 
   async function loadInventory() {
+    setMsg("");
     setLoading(true);
-    const { data, error } = await supabase
-      .from("inventory")
-      .select("*")
-      .order("item", { ascending: true });
 
-    if (error) {
-      console.error(error);
-      setMsg("Error loading inventory.");
+    const res = await supabase.from("inventory").select("*");
+
+    if (res.error) {
+      console.error(res.error);
+      setMsg(`Error loading inventory: ${res.error.message}`);
       setRows([]);
       setLoading(false);
       return;
     }
 
-    setRows((data as InventoryRow[]) || []);
+    const normalized = (res.data ?? [])
+      .map(normalizeRow)
+      .filter((r) => r.item);
+
+    normalized.sort((a, b) => a.item.localeCompare(b.item));
+
+    setRows(normalized);
     setLoading(false);
   }
 
@@ -48,39 +71,36 @@ export default function Inventory() {
   }, []);
 
   const lowStockIds = useMemo(() => {
-    const set = new Set<number>();
-    for (const r of rows) if ((r.qty ?? 0) < 5) set.add(r.id);
-    return set;
+    const s = new Set<any>();
+    for (const r of rows) if ((r.qty ?? 0) < 5) s.add(r.id);
+    return s;
   }, [rows]);
 
-  async function saveQty(id: number, nextQty: number) {
+  function onQtyChange(id: any, value: string) {
+    const next = num(value);
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, qty: next } : r)));
+  }
+
+  async function saveQty(id: any, nextQty: number) {
     setMsg("");
     setSavingId(id);
 
-    const { error } = await supabase.from("inventory").update({ qty: nextQty }).eq("id", id);
+    // Update qty (assumes your table uses "qty" – which it should)
+    const res = await supabase.from("inventory").update({ qty: nextQty }).eq("id", id);
 
     setSavingId(null);
 
-    if (error) {
-      console.error(error);
-      setMsg("Could not save qty. Try again.");
+    if (res.error) {
+      console.error(res.error);
+      setMsg(`Could not save qty: ${res.error.message}`);
       return;
     }
 
-    // Update local UI instantly (no full reload needed)
+    // keep UI in sync
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, qty: nextQty } : r)));
   }
 
-  function onQtyChange(id: number, value: string) {
-    // Update UI as they type (local only), then they hit Save
-    const n = Number(value);
-    const safe = Number.isFinite(n) ? n : 0;
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, qty: safe } : r)));
-  }
-
-  if (loading) {
-    return <div className="page muted">Loading inventory…</div>;
-  }
+  if (loading) return <div className="page muted">Loading inventory…</div>;
 
   return (
     <div className="page">
@@ -89,11 +109,7 @@ export default function Inventory() {
         <button className="btn" onClick={loadInventory}>Refresh</button>
       </div>
 
-      {msg && (
-        <div className="card" style={{ marginTop: 12 }}>
-          {msg}
-        </div>
-      )}
+      {msg && <div className="card" style={{ marginTop: 12 }}>{msg}</div>}
 
       <div className="card" style={{ marginTop: 12 }}>
         <table className="table">
@@ -112,7 +128,7 @@ export default function Inventory() {
             {rows.map((r) => {
               const low = lowStockIds.has(r.id);
               return (
-                <tr key={r.id} style={low ? { outline: "2px solid rgba(255,0,0,0.35)" } : undefined}>
+                <tr key={String(r.id)} style={low ? { outline: "2px solid rgba(255,0,0,0.35)" } : undefined}>
                   <td>
                     <div style={{ fontWeight: 700 }}>{r.item}</div>
                     {low && <div className="muted" style={{ marginTop: 2 }}>Low stock</div>}
@@ -128,8 +144,8 @@ export default function Inventory() {
                     />
                   </td>
 
-                  <td>{money(r.unit_cost)}</td>
-                  <td>{money(r.resale_price ?? 0)}</td>
+                  <td>{money(r.unitCost)}</td>
+                  <td>{money(r.resalePrice)}</td>
                   <td>{money(r.profit)}</td>
 
                   <td>
@@ -150,13 +166,9 @@ export default function Inventory() {
 
         {rows.length === 0 && (
           <div className="muted" style={{ marginTop: 12 }}>
-            No inventory rows found. Import your Excel file on the Import/Export page.
+            No inventory rows found. Import your Excel again.
           </div>
         )}
-      </div>
-
-      <div className="muted" style={{ marginTop: 12 }}>
-        Tip: Qty turns “Low stock” when it’s under 5.
       </div>
     </div>
   );
