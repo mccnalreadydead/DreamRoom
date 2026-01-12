@@ -1,161 +1,163 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "../supabaseClient";
 
-type Row = Record<string, any>;
+type InventoryRow = {
+  id: number;
+  item: string;
+  qty: number;
+  unit_cost: number;
+  resale_price: number | null;
+  profit: number;
+  note?: string | null;
+};
 
-function load(key: string): Row[] {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(key: string, rows: Row[]) {
-  localStorage.setItem(key, JSON.stringify(rows));
-  window.dispatchEvent(new Event("ad-storage-updated"));
-}
-
-function toNumber(v: any) {
-  if (v == null) return 0;
-  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function getQty(row: Row) {
-  const v =
-    row.qty ?? row.Qty ?? row.quantity ?? row.Quantity ?? row.stock ?? row.Stock ?? row.inStock ?? row.InStock;
-  return toNumber(v);
-}
-
-function setQty(row: Row, newQty: number) {
-  // Try to preserve whatever column exists; otherwise create "Quantity"
-  if ("qty" in row) row.qty = newQty;
-  else if ("Qty" in row) row.Qty = newQty;
-  else if ("quantity" in row) row.quantity = newQty;
-  else if ("Quantity" in row) row.Quantity = newQty;
-  else if ("stock" in row) row.stock = newQty;
-  else if ("Stock" in row) row.Stock = newQty;
-  else if ("inStock" in row) row.inStock = newQty;
-  else if ("InStock" in row) row.InStock = newQty;
-  else row.Quantity = newQty;
+function money(n: any) {
+  const v = typeof n === "number" ? n : Number(n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 export default function Inventory() {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [query, setQuery] = useState("");
+  const [rows, setRows] = useState<InventoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
 
-  function reload() {
-    setRows(load("inventory"));
+  async function loadInventory() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("*")
+      .order("item", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      setMsg("Error loading inventory.");
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
+    setRows((data as InventoryRow[]) || []);
+    setLoading(false);
   }
 
   useEffect(() => {
-    reload();
-    const onUpdate = () => reload();
-    window.addEventListener("ad-storage-updated", onUpdate);
-    window.addEventListener("storage", onUpdate);
-    return () => {
-      window.removeEventListener("ad-storage-updated", onUpdate);
-      window.removeEventListener("storage", onUpdate);
-    };
+    loadInventory();
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q));
-  }, [rows, query]);
+  const lowStockIds = useMemo(() => {
+    const set = new Set<number>();
+    for (const r of rows) if ((r.qty ?? 0) < 5) set.add(r.id);
+    return set;
+  }, [rows]);
 
-  const cols = useMemo(() => {
-    const first = filtered[0];
-    if (!first) return [];
-    // Always include Quantity column if present
-    const keys = Object.keys(first);
-    return keys.slice(0, 20);
-  }, [filtered]);
+  async function saveQty(id: number, nextQty: number) {
+    setMsg("");
+    setSavingId(id);
 
-  function updateQtyAt(index: number, newQty: number) {
-    const next = [...rows];
-    const row = { ...next[index] };
-    setQty(row, Math.max(0, newQty));
-    next[index] = row;
-    setRows(next);
-    save("inventory", next);
+    const { error } = await supabase.from("inventory").update({ qty: nextQty }).eq("id", id);
+
+    setSavingId(null);
+
+    if (error) {
+      console.error(error);
+      setMsg("Could not save qty. Try again.");
+      return;
+    }
+
+    // Update local UI instantly (no full reload needed)
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, qty: nextQty } : r)));
+  }
+
+  function onQtyChange(id: number, value: string) {
+    // Update UI as they type (local only), then they hit Save
+    const n = Number(value);
+    const safe = Number.isFinite(n) ? n : 0;
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, qty: safe } : r)));
+  }
+
+  if (loading) {
+    return <div className="page muted">Loading inventory…</div>;
   }
 
   return (
     <div className="page">
-      <div className="row">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0 }}>Inventory</h1>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input
-            className="input"
-            placeholder="Search inventory…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: 260 }}
-          />
-          <button className="btn" onClick={reload}>Reload</button>
-        </div>
+        <button className="btn" onClick={loadInventory}>Refresh</button>
       </div>
 
-      <p className="muted">
-        Key: <span className="pill">inventory</span> — Rows: <span className="pill">{rows.length}</span>
-      </p>
+      {msg && (
+        <div className="card" style={{ marginTop: 12 }}>
+          {msg}
+        </div>
+      )}
 
-      <div className="card">
-        {rows.length === 0 ? (
-          <p className="muted">Inventory is empty. Go to Import/Export and click IMPORT ALL.</p>
-        ) : (
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Qty</th>
-                  <th>Adjust</th>
-                  {cols.map((k) => <th key={k}>{k}</th>)}
+      <div className="card" style={{ marginTop: 12 }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: "42%" }}>Item</th>
+              <th style={{ width: 140 }}>Qty</th>
+              <th style={{ width: 140 }}>Unit Cost</th>
+              <th style={{ width: 140 }}>Resell</th>
+              <th style={{ width: 140 }}>Profit</th>
+              <th style={{ width: 120 }}>Save</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((r) => {
+              const low = lowStockIds.has(r.id);
+              return (
+                <tr key={r.id} style={low ? { outline: "2px solid rgba(255,0,0,0.35)" } : undefined}>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{r.item}</div>
+                    {low && <div className="muted" style={{ marginTop: 2 }}>Low stock</div>}
+                  </td>
+
+                  <td>
+                    <input
+                      type="number"
+                      value={r.qty ?? 0}
+                      onChange={(e) => onQtyChange(r.id, e.target.value)}
+                      className="input"
+                      style={{ width: "100%" }}
+                    />
+                  </td>
+
+                  <td>{money(r.unit_cost)}</td>
+                  <td>{money(r.resale_price ?? 0)}</td>
+                  <td>{money(r.profit)}</td>
+
+                  <td>
+                    <button
+                      className="btn primary"
+                      onClick={() => saveQty(r.id, Number(r.qty ?? 0))}
+                      disabled={savingId === r.id}
+                      style={{ width: "100%" }}
+                    >
+                      {savingId === r.id ? "Saving…" : "Save"}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r, i) => {
-                  // We need the correct index in the original rows array to save changes
-                  const originalIndex = rows.indexOf(r);
-                  const qty = getQty(r);
-                  const low = qty < 5;
+              );
+            })}
+          </tbody>
+        </table>
 
-                  return (
-                    <tr key={i} className={low ? "lowRow" : ""}>
-                      <td className={low ? "lowQty" : ""}>{qty}</td>
-                      <td>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <button className="btn" onClick={() => updateQtyAt(originalIndex, qty - 1)}>-</button>
-                          <input
-                            className="input"
-                            style={{ width: 90 }}
-                            value={String(qty)}
-                            onChange={(e) => updateQtyAt(originalIndex, toNumber(e.target.value))}
-                          />
-                          <button className="btn" onClick={() => updateQtyAt(originalIndex, qty + 1)}>+</button>
-                        </div>
-                      </td>
-                      {cols.map((k) => <td key={k}>{String(r[k] ?? "")}</td>)}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        {rows.length === 0 && (
+          <div className="muted" style={{ marginTop: 12 }}>
+            No inventory rows found. Import your Excel file on the Import/Export page.
           </div>
         )}
       </div>
 
-      <p className="muted" style={{ marginTop: 10 }}>
-        Low stock rule: qty &lt; 5 turns red.
-      </p>
+      <div className="muted" style={{ marginTop: 12 }}>
+        Tip: Qty turns “Low stock” when it’s under 5.
+      </div>
     </div>
   );
 }
-
