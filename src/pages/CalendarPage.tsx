@@ -188,17 +188,115 @@ export default function SalesCalendar() {
 
   return (
     <div className="page">
-      <div className="row" style={{ alignItems: "center" }}>
+      <style>{`
+        /* Make controls and calendar easier on mobile */
+        .calHeaderRow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .calControls {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: flex-end;
+        }
+
+        .weekdaySticky {
+          position: sticky;
+          top: 70px; /* below your top nav bar */
+          z-index: 10;
+          background: rgba(10,10,10,0.85);
+          backdrop-filter: blur(10px);
+          border: 1px solid rgba(255,255,255,0.10);
+          border-radius: 12px;
+          padding: 8px;
+        }
+
+        .weekdayGrid {
+          display: grid;
+          grid-template-columns: repeat(7, 1fr);
+          gap: 8px;
+        }
+
+        .daysGrid {
+          display: grid;
+          grid-template-columns: repeat(7, 1fr);
+          gap: 8px;
+        }
+
+        /* Day cells default (desktop/tablet) */
+        .dayCell {
+          text-align: left;
+          padding: 10px;
+          min-height: 90px;
+          cursor: pointer;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(0,0,0,0.0);
+          color: #fff;
+        }
+
+        /* Better tap targets on mobile */
+        @media (max-width: 700px) {
+          .calHeaderRow {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+
+          .calControls {
+            width: 100%;
+            justify-content: space-between;
+          }
+
+          .calControls .input {
+            width: 100% !important;
+          }
+
+          .weekdaySticky {
+            top: 92px; /* a bit lower on mobile due to stacked tabs */
+            padding: 10px;
+          }
+
+          .dayCell {
+            min-height: 104px;
+            padding: 12px;
+          }
+
+          .dayNum {
+            font-size: 18px !important;
+          }
+
+          .notePreview {
+            font-size: 13px !important;
+          }
+
+          button.btn {
+            min-height: 44px;
+            padding: 10px 12px;
+          }
+
+          select.input, textarea.input, input.input {
+            min-height: 44px;
+            font-size: 16px; /* prevents iOS zoom */
+          }
+        }
+
+        /* Very small phones: slightly tighter grid gaps */
+        @media (max-width: 420px) {
+          .weekdayGrid, .daysGrid { gap: 6px; }
+          .dayCell { min-height: 96px; padding: 10px; }
+        }
+      `}</style>
+
+      <div className="calHeaderRow">
         <h1 style={{ margin: 0 }}>Sales Calendar</h1>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
+        <div className="calControls">
           <button className="btn" onClick={goPrevMonth}>
             ◀
           </button>
@@ -236,51 +334,36 @@ export default function SalesCalendar() {
       </div>
 
       <p className="muted" style={{ marginTop: 8 }}>
-        Click any day to add a note. Notes auto-save to this browser (local).
+        Tap any day to add a note. Notes auto-save to this browser (local).
       </p>
 
       <div className="card" style={{ padding: 12 }}>
-        {/* Weekday header */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 8,
-            marginBottom: 8,
-          }}
-        >
-          {WEEKDAYS.map((w) => (
-            <div
-              key={w}
-              className="muted"
-              style={{ fontWeight: 700, textAlign: "center" }}
-            >
-              {w}
-            </div>
-          ))}
+        {/* Weekday header (sticky on mobile) */}
+        <div className="weekdaySticky" style={{ marginBottom: 10 }}>
+          <div className="weekdayGrid">
+            {WEEKDAYS.map((w) => (
+              <div
+                key={w}
+                className="muted"
+                style={{ fontWeight: 800, textAlign: "center" }}
+              >
+                {w}
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Calendar grid */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 8,
-          }}
-        >
+        <div className="daysGrid">
           {grid.map((cell) => {
             const hasNote = !!cell.note?.trim();
 
             return (
               <button
                 key={cell.key}
-                className="card"
+                className="dayCell"
                 onClick={() => openDay(cell.key)}
                 style={{
-                  textAlign: "left",
-                  padding: 10,
-                  minHeight: 84,
-                  cursor: "pointer",
                   opacity: cell.inMonth ? 1 : 0.45,
                   border: cell.isToday
                     ? "1px solid rgba(255,255,255,0.45)"
@@ -288,7 +371,6 @@ export default function SalesCalendar() {
                   background: hasNote
                     ? "rgba(255,255,255,0.06)"
                     : "rgba(0,0,0,0.0)",
-                  color: "#ffffff", // ✅ force white text for the whole cell
                 }}
               >
                 <div
@@ -296,10 +378,13 @@ export default function SalesCalendar() {
                     display: "flex",
                     justifyContent: "space-between",
                     gap: 8,
+                    alignItems: "center",
                   }}
                 >
-                  {/* ✅ DATE NUMBER WHITE */}
-                  <div style={{ fontWeight: 800, color: "#ffffff", fontSize: 16 }}>
+                  <div
+                    className="dayNum"
+                    style={{ fontWeight: 900, color: "#ffffff", fontSize: 16 }}
+                  >
                     {cell.d}
                   </div>
 
@@ -311,11 +396,19 @@ export default function SalesCalendar() {
                 </div>
 
                 <div
-                  className="muted"
-                  style={{ marginTop: 8, fontSize: 12, lineHeight: 1.2 }}
+                  className="muted notePreview"
+                  style={{
+                    marginTop: 8,
+                    fontSize: 12,
+                    lineHeight: 1.25,
+                    overflow: "hidden",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                  }}
                 >
                   {hasNote
-                    ? cell.note.slice(0, 50) + (cell.note.length > 50 ? "…" : "")
+                    ? cell.note
                     : " "}
                 </div>
               </button>
@@ -356,7 +449,7 @@ export default function SalesCalendar() {
             </label>
             <textarea
               className="input"
-              style={{ height: 140, resize: "vertical" }}
+              style={{ height: 160, resize: "vertical" }}
               value={editorValue}
               onChange={(e) => setEditorValue(e.target.value)}
               placeholder="Example: Customer wants SM7B. Meet at 6pm. Bring cash app info."

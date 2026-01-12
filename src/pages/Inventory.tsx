@@ -9,7 +9,7 @@ type InvRow = {
   resale_price: number | null;
 };
 
-function toNum(v: any) {
+function toNumOrNull(v: any) {
   if (v == null || v === "") return null;
   const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
   const n = Number(cleaned);
@@ -21,7 +21,7 @@ export default function Inventory() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
-  // Add form
+  // add form
   const [item, setItem] = useState("");
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState("");
@@ -34,14 +34,13 @@ export default function Inventory() {
       .from("inventory")
       .select("id,item,qty,unit_cost,resale_price")
       .order("id", { ascending: false })
-      .limit(500);
+      .limit(2000);
 
     if (error) {
       setError(error.message);
       setStatus("");
       return;
     }
-
     setRows((data as InvRow[]) ?? []);
     setStatus(`Loaded ${data?.length ?? 0} item(s).`);
   }
@@ -56,15 +55,12 @@ export default function Inventory() {
 
     const payload = {
       item: item.trim(),
-      qty: toNum(qty) ?? 0,
-      unit_cost: toNum(unitCost),
-      resale_price: toNum(resalePrice),
+      qty: Math.trunc(toNumOrNull(qty) ?? 0),
+      unit_cost: toNumOrNull(unitCost),
+      resale_price: toNumOrNull(resalePrice),
     };
 
-    if (!payload.item) {
-      setError("Item name is required.");
-      return;
-    }
+    if (!payload.item) return setError("Item name is required.");
 
     setStatus("Saving item...");
     const { error } = await supabase.from("inventory").insert([payload]);
@@ -83,15 +79,36 @@ export default function Inventory() {
     await load();
   }
 
-  async function deleteItem(row: InvRow) {
-    const ok = window.confirm(`Delete "${row.item}"? This cannot be undone.`);
+  async function saveRow(r: InvRow) {
+    setError("");
+    setStatus(`Saving "${r.item}"...`);
+
+    const { error } = await supabase
+      .from("inventory")
+      .update({
+        qty: r.qty ?? 0,
+        unit_cost: r.unit_cost,
+        resale_price: r.resale_price,
+      })
+      .eq("id", r.id);
+
+    if (error) {
+      setError(error.message);
+      setStatus("");
+      return;
+    }
+
+    setStatus("✅ Saved.");
+  }
+
+  async function deleteRow(r: InvRow) {
+    const ok = window.confirm(`Delete "${r.item}"? This cannot be undone.`);
     if (!ok) return;
 
     setError("");
-    setStatus(`Deleting "${row.item}"...`);
+    setStatus(`Deleting "${r.item}"...`);
 
-    const { error } = await supabase.from("inventory").delete().eq("id", row.id);
-
+    const { error } = await supabase.from("inventory").delete().eq("id", r.id);
     if (error) {
       setError(error.message);
       setStatus("");
@@ -103,7 +120,10 @@ export default function Inventory() {
   }
 
   const totalResaleValue = useMemo(() => {
-    return rows.reduce((sum, r) => sum + Number(r.resale_price || 0) * Number(r.qty || 0), 0);
+    return rows.reduce(
+      (sum, r) => sum + Number(r.resale_price || 0) * Number(r.qty || 0),
+      0
+    );
   }, [rows]);
 
   return (
@@ -112,17 +132,18 @@ export default function Inventory() {
         .grid { display: grid; gap: 12px; }
         .twoCol { grid-template-columns: 1fr 1fr; }
         .card { border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.04); }
-        .row { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
         .btnRow { display:flex; gap: 8px; flex-wrap: wrap; }
         input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25); color: inherit; }
         button { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: inherit; cursor: pointer; }
         button:hover { background: rgba(255,255,255,0.10); }
         .danger { border-color: rgba(255,80,80,0.35); }
         .danger:hover { background: rgba(255,80,80,0.15); }
+        .muted { opacity: 0.85; }
         .tableWrap { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.10); text-align: left; white-space: nowrap; }
-        .muted { opacity: 0.85; }
+        .qtyLow { border-color: rgba(255,80,80,0.55) !important; }
+        .qtyLowText { color: salmon; font-weight: 800; }
         .mobileOnly { display: none; }
         .desktopOnly { display: block; }
         @media (max-width: 700px) {
@@ -133,7 +154,6 @@ export default function Inventory() {
       `}</style>
 
       <h2>Inventory</h2>
-
       {status && <p className="muted">{status}</p>}
       {error && <p style={{ color: "salmon" }}>{error}</p>}
 
@@ -171,11 +191,11 @@ export default function Inventory() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Quick Summary</h3>
+          <h3 style={{ marginTop: 0 }}>Summary</h3>
           <p className="muted">
             Estimated resale value (resale_price × qty): <b>{totalResaleValue.toFixed(2)}</b>
           </p>
-          <p className="muted">Tip: On mobile, items show as cards with a Delete button.</p>
+          <p className="muted">Qty will highlight red when below 5.</p>
         </div>
       </div>
 
@@ -185,24 +205,60 @@ export default function Inventory() {
       <div className="mobileOnly">
         <h3>Items ({rows.length})</h3>
         <div className="grid">
-          {rows.map((r) => (
-            <div className="card" key={r.id}>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{r.item}</div>
-              <div className="muted" style={{ marginTop: 6 }}>
-                Qty: <b>{r.qty ?? 0}</b>
-                <br />
-                Unit cost: <b>{r.unit_cost ?? ""}</b>
-                <br />
-                Resale: <b>{r.resale_price ?? ""}</b>
-              </div>
+          {rows.map((r) => {
+            const low = Number(r.qty || 0) < 5;
+            return (
+              <div className="card" key={r.id}>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>{r.item}</div>
 
-              <div className="btnRow" style={{ marginTop: 10 }}>
-                <button className="danger" onClick={() => deleteItem(r)}>
-                  Delete
-                </button>
+                <div className="grid" style={{ marginTop: 10 }}>
+                  <label>
+                    Qty {low ? <span className="qtyLowText">(LOW)</span> : null}
+                    <input
+                      className={low ? "qtyLow" : ""}
+                      value={String(r.qty ?? 0)}
+                      onChange={(e) => {
+                        const v = Math.trunc(toNumOrNull(e.target.value) ?? 0);
+                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, qty: v } : x)));
+                      }}
+                      inputMode="numeric"
+                    />
+                  </label>
+
+                  <label>
+                    Unit cost
+                    <input
+                      value={String(r.unit_cost ?? "")}
+                      onChange={(e) => {
+                        const v = toNumOrNull(e.target.value);
+                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, unit_cost: v } : x)));
+                      }}
+                      inputMode="decimal"
+                    />
+                  </label>
+
+                  <label>
+                    Resale price
+                    <input
+                      value={String(r.resale_price ?? "")}
+                      onChange={(e) => {
+                        const v = toNumOrNull(e.target.value);
+                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, resale_price: v } : x)));
+                      }}
+                      inputMode="decimal"
+                    />
+                  </label>
+
+                  <div className="btnRow">
+                    <button onClick={() => saveRow(r)}>Save</button>
+                    <button className="danger" onClick={() => deleteRow(r)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -213,32 +269,63 @@ export default function Inventory() {
           <table>
             <thead>
               <tr>
-                <th>ID</th>
                 <th>Item</th>
                 <th>Qty</th>
                 <th>Unit Cost</th>
-                <th>Resale Price</th>
+                <th>Resale</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.id}</td>
-                  <td>{r.item}</td>
-                  <td>{r.qty ?? ""}</td>
-                  <td>{r.unit_cost ?? ""}</td>
-                  <td>{r.resale_price ?? ""}</td>
-                  <td>
-                    <button className="danger" onClick={() => deleteItem(r)}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const low = Number(r.qty || 0) < 5;
+                return (
+                  <tr key={r.id}>
+                    <td>{r.item}</td>
+                    <td style={{ minWidth: 120 }}>
+                      <input
+                        className={low ? "qtyLow" : ""}
+                        value={String(r.qty ?? 0)}
+                        onChange={(e) => {
+                          const v = Math.trunc(toNumOrNull(e.target.value) ?? 0);
+                          setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, qty: v } : x)));
+                        }}
+                        inputMode="numeric"
+                      />
+                      {low ? <div className="qtyLowText">Low</div> : null}
+                    </td>
+                    <td style={{ minWidth: 140 }}>
+                      <input
+                        value={String(r.unit_cost ?? "")}
+                        onChange={(e) => {
+                          const v = toNumOrNull(e.target.value);
+                          setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, unit_cost: v } : x)));
+                        }}
+                        inputMode="decimal"
+                      />
+                    </td>
+                    <td style={{ minWidth: 140 }}>
+                      <input
+                        value={String(r.resale_price ?? "")}
+                        onChange={(e) => {
+                          const v = toNumOrNull(e.target.value);
+                          setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, resale_price: v } : x)));
+                        }}
+                        inputMode="decimal"
+                      />
+                    </td>
+                    <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={() => saveRow(r)}>Save</button>
+                      <button className="danger" onClick={() => deleteRow(r)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {!rows.length && (
                 <tr>
-                  <td colSpan={6} className="muted">
+                  <td colSpan={5} className="muted">
                     No items yet.
                   </td>
                 </tr>
