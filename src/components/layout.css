@@ -72,3 +72,17 @@
   }
 }
 
+/* ✅ MOBILE: keep the whole top bar fixed (stays on screen as you scroll) */
+@media (max-width: 760px) {
+  .ad-topbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+  }
+
+  /* Give content space so it doesn't hide under the fixed header */
+  .ad-main {
+    padding-top: 170px;
+  }
+}

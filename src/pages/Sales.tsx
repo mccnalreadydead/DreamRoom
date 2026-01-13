@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { useState } from "react";
 import { supabase } from "../supabaseClient";
+import { useLocalDraft } from "../hooks/useLocalDraft";
 
 type SaleRow = {
   id: number;
-  date: string | null;       // YYYY-MM-DD
+  date: string | null; // YYYY-MM-DD
   item: string | null;
   units_sold: number | null;
   profit: number | null;
   note: string | null;
+};
+
+type SaleLine = {
+  item: string;
+  units: number;
+  profit: number;
 };
 
 function todayISO() {
@@ -34,12 +42,16 @@ export default function Sales() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // new sale form
-  const [date, setDate] = useState<string>(todayISO());
-  const [item, setItem] = useState<string>("");
-  const [units, setUnits] = useState<number>(1);
-  const [profit, setProfit] = useState<number>(0);
-  const [note, setNote] = useState<string>("");
+  // ✅ Draft autosave (so leaving the page doesn't wipe the form)
+  const { state: draft, setState: setDraft, clear: clearDraft } = useLocalDraft("dead-inventory:sales:draft", {
+    date: todayISO(),
+    note: "",
+    lines: [{ item: "", units: 1, profit: 0 }] as SaleLine[],
+  });
+
+  const date = draft.date as string;
+  const note = draft.note as string;
+  const lines = draft.lines as SaleLine[];
 
   async function load() {
     setLoading(true);
@@ -49,7 +61,6 @@ export default function Sales() {
     if (inv.error) setErr(inv.error.message);
     setInventoryItems((inv.data ?? []).map((x: any) => x.item));
 
-    // NOTE: your table in Supabase is named Sales (capital S) in the UI
     const sales = await supabase
       .from("Sales")
       .select("id,date,item,units_sold,profit,note")
@@ -66,56 +77,91 @@ export default function Sales() {
     load();
   }, []);
 
+  function addLine() {
+    setDraft((d: any) => ({
+      ...d,
+      lines: [...(d.lines ?? []), { item: "", units: 1, profit: 0 }],
+    }));
+  }
+
+  function removeLine(idx: number) {
+    setDraft((d: any) => {
+      const next = [...(d.lines ?? [])];
+      next.splice(idx, 1);
+      return { ...d, lines: next.length ? next : [{ item: "", units: 1, profit: 0 }] };
+    });
+  }
+
+  function updateLine(idx: number, patch: Partial<SaleLine>) {
+    setDraft((d: any) => {
+      const next = [...(d.lines ?? [])];
+      next[idx] = { ...next[idx], ...patch };
+      return { ...d, lines: next };
+    });
+  }
+
+  const formTotalProfit = useMemo(() => {
+    return lines.reduce((sum, ln) => sum + Number(ln.profit ?? 0), 0);
+  }, [lines]);
+
   async function addSale() {
-    if (!item.trim()) {
-      alert("Pick an item.");
+    // validate at least 1 valid line
+    const cleanLines = lines
+      .map((ln) => ({
+        item: String(ln.item ?? "").trim(),
+        units: Math.max(0, Number(ln.units ?? 0)),
+        profit: Number(ln.profit ?? 0),
+      }))
+      .filter((ln) => ln.item && ln.units > 0);
+
+    if (!cleanLines.length) {
+      alert("Add at least one line with an item and units > 0.");
       return;
     }
 
     setErr("");
 
-    // 1) insert sale
-    const { error: insErr } = await supabase.from("Sales").insert([
-      {
-        date,
-        item: item.trim(),
-        units_sold: units,
-        profit,
-        note: note.trim() || null,
-      },
-    ]);
+    // 1) insert multiple sale rows (one per item line)
+    const inserts = cleanLines.map((ln) => ({
+      date,
+      item: ln.item,
+      units_sold: ln.units,
+      profit: ln.profit,
+      note: String(note || "").trim() || null,
+    }));
 
+    const { error: insErr } = await supabase.from("Sales").insert(inserts);
     if (insErr) {
       setErr(insErr.message);
       return;
     }
 
-    // 2) deduct inventory qty for that item
-    // (simple + reliable approach: read qty, update qty)
-    const invRow = await supabase
-      .from("inventory")
-      .select("id,qty")
-      .eq("item", item.trim())
-      .maybeSingle();
+    // 2) deduct inventory per line item
+    // (read qty -> update qty)
+    for (const ln of cleanLines) {
+      const invRow = await supabase.from("inventory").select("id,qty").eq("item", ln.item).maybeSingle();
 
-    if (invRow.data?.id != null) {
-      const currentQty = Number(invRow.data.qty ?? 0);
-      const nextQty = Math.max(0, currentQty - Number(units ?? 0));
-
-      const upd = await supabase.from("inventory").update({ qty: nextQty }).eq("id", invRow.data.id);
-      if (upd.error) {
-        // Sale still saved; inventory update failed
-        setErr(`Sale saved, but inventory could not update: ${upd.error.message}`);
+      if (invRow.error) {
+        setErr(`Sale saved, but inventory lookup failed for "${ln.item}": ${invRow.error.message}`);
+        continue;
       }
-    } else {
-      // not found: sale still saved, just no inventory row to deduct
-      setErr("Sale saved, but no matching inventory item was found to deduct from.");
+
+      if (invRow.data?.id != null) {
+        const currentQty = Number(invRow.data.qty ?? 0);
+        const nextQty = Math.max(0, currentQty - Number(ln.units ?? 0));
+        const upd = await supabase.from("inventory").update({ qty: nextQty }).eq("id", invRow.data.id);
+
+        if (upd.error) {
+          setErr(`Sale saved, but inventory could not update for "${ln.item}": ${upd.error.message}`);
+        }
+      } else {
+        setErr(`Sale saved, but no matching inventory item found to deduct for "${ln.item}".`);
+      }
     }
 
     // reset form
-    setUnits(1);
-    setProfit(0);
-    setNote("");
+    setDraft({ date: todayISO(), note: "", lines: [{ item: "", units: 1, profit: 0 }] });
+    clearDraft();
 
     await load();
   }
@@ -154,66 +200,113 @@ export default function Sales() {
       ) : null}
 
       <div className="card" style={{ padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Add Sale</h2>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(12, 1fr)",
-            gap: 10,
-          }}
-        >
-          <div style={{ gridColumn: "span 3" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Date</div>
-            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Add Sale</h2>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Form total profit: <b>${formTotalProfit.toFixed(2)}</b>
           </div>
+        </div>
 
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 10, marginTop: 10 }}>
           <div style={{ gridColumn: "span 4" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Item</div>
-            <select className="input" value={item} onChange={(e) => setItem(e.target.value)}>
-              <option value="">Select…</option>
-              {inventoryItems.map((it) => (
-                <option key={it} value={it}>{it}</option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ gridColumn: "span 2" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Units</div>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+              Date
+            </div>
             <input
               className="input"
-              value={units}
-              onChange={(e) => setUnits(toInt(e.target.value))}
+              type="date"
+              value={date}
+              onChange={(e) => setDraft((d: any) => ({ ...d, date: e.target.value }))}
             />
           </div>
 
-          <div style={{ gridColumn: "span 3" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Profit ($)</div>
-            <input
-              className="input"
-              value={profit}
-              onChange={(e) => setProfit(toNum(e.target.value))}
-            />
+          <div style={{ gridColumn: "span 8" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+              Note (optional, applies to all lines)
+            </div>
+            <input className="input" value={note} onChange={(e) => setDraft((d: any) => ({ ...d, note: e.target.value }))} />
           </div>
 
           <div style={{ gridColumn: "span 12" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Note (optional)</div>
-            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
-          </div>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>
+              Items
+            </div>
 
-          <div style={{ gridColumn: "span 12", display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="btn primary" onClick={addSale}>Save Sale</button>
+            <div style={{ display: "grid", gap: 10 }}>
+              {lines.map((ln, idx) => (
+                <div
+                  key={idx}
+                  className="card"
+                  style={{
+                    padding: 10,
+                    borderColor: "rgba(255,255,255,0.10)",
+                    display: "grid",
+                    gridTemplateColumns: "4fr 2fr 2fr auto",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                      Item
+                    </div>
+                    <select className="input" value={ln.item} onChange={(e) => updateLine(idx, { item: e.target.value })}>
+                      <option value="">Select…</option>
+                      {inventoryItems.map((it) => (
+                        <option key={it} value={it}>
+                          {it}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                      Units
+                    </div>
+                    <input className="input" value={ln.units} onChange={(e) => updateLine(idx, { units: toInt(e.target.value) })} />
+                  </div>
+
+                  <div>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                      Profit ($)
+                    </div>
+                    <input className="input" value={ln.profit} onChange={(e) => updateLine(idx, { profit: toNum(e.target.value) })} />
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button className="btn" type="button" onClick={() => removeLine(idx)} title="Remove line">
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn" type="button" onClick={addLine}>
+                + Add line
+              </button>
+              <button className="btn primary" type="button" onClick={addSale}>
+                Save Sale
+              </button>
+            </div>
           </div>
         </div>
 
         <style>{`
           @media (max-width: 760px) {
             .page .card h2 { font-size: 18px; }
-            .page .card > div[style*="grid-template-columns"] {
+            .page .card > div[style*="grid-template-columns: repeat(12"] {
               grid-template-columns: repeat(6, 1fr) !important;
             }
-            .page .card > div[style*="grid-template-columns"] > div {
+            .page .card > div[style*="grid-template-columns: repeat(12"] > div {
               grid-column: span 6 !important;
+            }
+          }
+          @media (max-width: 760px) {
+            .page .card .card[style*="grid-template-columns: 4fr"]{
+              grid-template-columns: 1fr !important;
             }
           }
         `}</style>
@@ -247,9 +340,7 @@ export default function Sales() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    {r.date ?? ""}
-                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{r.date ?? ""}</td>
                   <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
                     <b>{r.item ?? ""}</b>
                   </td>
@@ -263,7 +354,9 @@ export default function Sales() {
                     <span className="muted">{r.note ?? ""}</span>
                   </td>
                   <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    <button className="btn" onClick={() => deleteSale(r.id)}>Delete</button>
+                    <button className="btn" onClick={() => deleteSale(r.id)}>
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}

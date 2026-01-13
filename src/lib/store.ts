@@ -154,6 +154,13 @@ export function addTracking(entry: Omit<TrackingEntry, "id">) {
   setTracking(t);
 }
 
+/** ✅ Delete a tracking entry */
+export function deleteTracking(id: string) {
+  const t = getTracking();
+  const next = t.filter((x) => x.id !== id);
+  setTracking(next);
+}
+
 /** Calendar */
 export function getCalendar(): CalendarNote[] {
   return readJSON<CalendarNote[]>(K.calendar, []);

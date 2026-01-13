@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "../supabaseClient";
 
 type NotesMap = Record<string, string>; // key: YYYY-MM-DD -> note text
 
@@ -7,11 +8,10 @@ function pad2(n: number) {
 }
 
 function isoDate(y: number, mIndex: number, d: number) {
-  // mIndex is 0-11
   return `${y}-${pad2(mIndex + 1)}-${pad2(d)}`;
 }
 
-function loadNotes(): NotesMap {
+function loadNotesLocal(): NotesMap {
   try {
     const raw = localStorage.getItem("calendarNotes");
     if (!raw) return {};
@@ -22,24 +22,14 @@ function loadNotes(): NotesMap {
   }
 }
 
-function saveNotes(notes: NotesMap) {
+function saveNotesLocal(notes: NotesMap) {
   localStorage.setItem("calendarNotes", JSON.stringify(notes));
   window.dispatchEvent(new Event("ad-storage-updated"));
 }
 
 const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
 ];
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -51,89 +41,30 @@ export default function SalesCalendar() {
   const [year, setYear] = useState<number>(today.getFullYear());
   const [monthIndex, setMonthIndex] = useState<number>(today.getMonth()); // 0-11
 
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
   // editor modal/state
   const [selectedDate, setSelectedDate] = useState<string>(""); // YYYY-MM-DD
   const [editorValue, setEditorValue] = useState<string>("");
 
-  useEffect(() => {
-    setNotes(loadNotes());
-
-    const onUpdate = () => setNotes(loadNotes());
-    window.addEventListener("ad-storage-updated", onUpdate);
-    window.addEventListener("storage", onUpdate);
-    return () => {
-      window.removeEventListener("ad-storage-updated", onUpdate);
-      window.removeEventListener("storage", onUpdate);
-    };
-  }, []);
-
-  function goPrevMonth() {
-    const d = new Date(year, monthIndex - 1, 1);
-    setYear(d.getFullYear());
-    setMonthIndex(d.getMonth());
-  }
-
-  function goNextMonth() {
-    const d = new Date(year, monthIndex + 1, 1);
-    setYear(d.getFullYear());
-    setMonthIndex(d.getMonth());
-  }
-
-  function openDay(dateKey: string) {
-    setSelectedDate(dateKey);
-    setEditorValue(notes[dateKey] ?? "");
-  }
-
-  function closeEditor() {
-    setSelectedDate("");
-    setEditorValue("");
-  }
-
-  function saveEditor() {
-    if (!selectedDate) return;
-    const next = { ...notes };
-
-    const trimmed = editorValue.trim();
-    if (!trimmed) {
-      delete next[selectedDate];
-    } else {
-      next[selectedDate] = trimmed;
-    }
-
-    setNotes(next);
-    saveNotes(next);
-    closeEditor();
-  }
-
-  function clearNote() {
-    if (!selectedDate) return;
-    const next = { ...notes };
-    delete next[selectedDate];
-    setNotes(next);
-    saveNotes(next);
-    closeEditor();
-  }
-
-  // Build calendar grid
+  // Build calendar grid (we use this to know the visible date range)
   const grid = useMemo(() => {
     const firstDay = new Date(year, monthIndex, 1);
-    const startWeekday = firstDay.getDay(); // 0=Sun
+    const startWeekday = firstDay.getDay();
     const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-
-    // previous month
     const prevMonthDays = new Date(year, monthIndex, 0).getDate();
 
     const cells: Array<{
       y: number;
-      m: number; // 0-11
+      m: number;
       d: number;
       inMonth: boolean;
-      key: string; // YYYY-MM-DD
+      key: string;
       isToday: boolean;
       note: string;
     }> = [];
 
-    // 42 cells (6 weeks) so it always looks like a real calendar
     for (let i = 0; i < 42; i++) {
       const dayNum = i - startWeekday + 1;
 
@@ -143,14 +74,12 @@ export default function SalesCalendar() {
       let inMonth = true;
 
       if (dayNum < 1) {
-        // previous month
         inMonth = false;
         const prev = new Date(year, monthIndex - 1, 1);
         y = prev.getFullYear();
         m = prev.getMonth();
         d = prevMonthDays + dayNum;
       } else if (dayNum > daysInMonth) {
-        // next month
         inMonth = false;
         const nxt = new Date(year, monthIndex + 1, 1);
         y = nxt.getFullYear();
@@ -178,8 +107,130 @@ export default function SalesCalendar() {
     return cells;
   }, [year, monthIndex, notes]);
 
+  const visibleRange = useMemo(() => {
+    const first = grid[0]?.key;
+    const last = grid[grid.length - 1]?.key;
+    return { first, last };
+  }, [grid]);
+
+  async function loadNotesFromDB(first: string, last: string) {
+    setLoading(true);
+    setErr("");
+    try {
+      // load a local cache first (instant UI)
+      const cached = loadNotesLocal();
+      setNotes(cached);
+
+      const { data, error } = await supabase
+        .from("calendar_notes")
+        .select("day,note")
+        .gte("day", first)
+        .lte("day", last);
+
+      if (error) throw error;
+
+      const next: NotesMap = { ...cached };
+      for (const row of data ?? []) {
+        const k = String((row as any).day);
+        next[k] = String((row as any).note ?? "");
+      }
+
+      setNotes(next);
+      saveNotesLocal(next);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+      // still keep local cache if DB fails
+      setNotes(loadNotesLocal());
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // initial load (and whenever month changes)
+    if (visibleRange.first && visibleRange.last) {
+      void loadNotesFromDB(visibleRange.first, visibleRange.last);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, monthIndex, visibleRange.first, visibleRange.last]);
+
+  function goPrevMonth() {
+    const d = new Date(year, monthIndex - 1, 1);
+    setYear(d.getFullYear());
+    setMonthIndex(d.getMonth());
+  }
+
+  function goNextMonth() {
+    const d = new Date(year, monthIndex + 1, 1);
+    setYear(d.getFullYear());
+    setMonthIndex(d.getMonth());
+  }
+
+  function openDay(dateKey: string) {
+    setSelectedDate(dateKey);
+    setEditorValue(notes[dateKey] ?? "");
+  }
+
+  function closeEditor() {
+    setSelectedDate("");
+    setEditorValue("");
+  }
+
+  async function saveEditor() {
+    if (!selectedDate) return;
+
+    const trimmed = editorValue.trim();
+    const next = { ...notes };
+
+    setErr("");
+
+    try {
+      if (!trimmed) {
+        // delete note
+        delete next[selectedDate];
+        setNotes(next);
+        saveNotesLocal(next);
+
+        const { error } = await supabase.from("calendar_notes").delete().eq("day", selectedDate);
+        if (error) throw error;
+
+        closeEditor();
+        return;
+      }
+
+      // upsert note
+      next[selectedDate] = trimmed;
+      setNotes(next);
+      saveNotesLocal(next);
+
+      const { error } = await supabase
+        .from("calendar_notes")
+        .upsert([{ day: selectedDate, note: trimmed }], { onConflict: "day" });
+
+      if (error) throw error;
+
+      closeEditor();
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    }
+  }
+
+  async function clearNote() {
+    if (!selectedDate) return;
+
+    setErr("");
+    const next = { ...notes };
+    delete next[selectedDate];
+    setNotes(next);
+    saveNotesLocal(next);
+
+    const { error } = await supabase.from("calendar_notes").delete().eq("day", selectedDate);
+    if (error) setErr(error.message);
+
+    closeEditor();
+  }
+
   const yearOptions = useMemo(() => {
-    // simple range around current year
     const base = today.getFullYear();
     const arr: number[] = [];
     for (let y = base - 5; y <= base + 5; y++) arr.push(y);
@@ -189,7 +240,6 @@ export default function SalesCalendar() {
   return (
     <div className="page">
       <style>{`
-        /* Make controls and calendar easier on mobile */
         .calHeaderRow {
           display: flex;
           align-items: center;
@@ -208,7 +258,7 @@ export default function SalesCalendar() {
 
         .weekdaySticky {
           position: sticky;
-          top: 70px; /* below your top nav bar */
+          top: 70px;
           z-index: 10;
           background: rgba(10,10,10,0.85);
           backdrop-filter: blur(10px);
@@ -229,7 +279,6 @@ export default function SalesCalendar() {
           gap: 8px;
         }
 
-        /* Day cells default (desktop/tablet) */
         .dayCell {
           text-align: left;
           padding: 10px;
@@ -241,52 +290,18 @@ export default function SalesCalendar() {
           color: #fff;
         }
 
-        /* Better tap targets on mobile */
         @media (max-width: 700px) {
-          .calHeaderRow {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-
-          .calControls {
-            width: 100%;
-            justify-content: space-between;
-          }
-
-          .calControls .input {
-            width: 100% !important;
-          }
-
-          .weekdaySticky {
-            top: 92px; /* a bit lower on mobile due to stacked tabs */
-            padding: 10px;
-          }
-
-          .dayCell {
-            min-height: 104px;
-            padding: 12px;
-          }
-
-          .dayNum {
-            font-size: 18px !important;
-          }
-
-          .notePreview {
-            font-size: 13px !important;
-          }
-
-          button.btn {
-            min-height: 44px;
-            padding: 10px 12px;
-          }
-
-          select.input, textarea.input, input.input {
-            min-height: 44px;
-            font-size: 16px; /* prevents iOS zoom */
-          }
+          .calHeaderRow { flex-direction: column; align-items: flex-start; }
+          .calControls { width: 100%; justify-content: space-between; }
+          .calControls .input { width: 100% !important; }
+          .weekdaySticky { top: 92px; padding: 10px; }
+          .dayCell { min-height: 104px; padding: 12px; }
+          .dayNum { font-size: 18px !important; }
+          .notePreview { font-size: 13px !important; }
+          button.btn { min-height: 44px; padding: 10px 12px; }
+          select.input, textarea.input, input.input { min-height: 44px; font-size: 16px; }
         }
 
-        /* Very small phones: slightly tighter grid gaps */
         @media (max-width: 420px) {
           .weekdayGrid, .daysGrid { gap: 6px; }
           .dayCell { min-height: 96px; padding: 10px; }
@@ -294,12 +309,15 @@ export default function SalesCalendar() {
       `}</style>
 
       <div className="calHeaderRow">
-        <h1 style={{ margin: 0 }}>Sales Calendar</h1>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>Sales Calendar</h1>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {loading ? "Loading…" : "Saved to cloud"}
+          </span>
+        </div>
 
         <div className="calControls">
-          <button className="btn" onClick={goPrevMonth}>
-            ◀
-          </button>
+          <button className="btn" onClick={goPrevMonth}>◀</button>
 
           <select
             className="input"
@@ -308,9 +326,7 @@ export default function SalesCalendar() {
             onChange={(e) => setMonthIndex(Number(e.target.value))}
           >
             {MONTHS.map((name, idx) => (
-              <option key={name} value={idx}>
-                {name}
-              </option>
+              <option key={name} value={idx}>{name}</option>
             ))}
           </select>
 
@@ -321,39 +337,35 @@ export default function SalesCalendar() {
             onChange={(e) => setYear(Number(e.target.value))}
           >
             {yearOptions.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
+              <option key={y} value={y}>{y}</option>
             ))}
           </select>
 
-          <button className="btn" onClick={goNextMonth}>
-            ▶
-          </button>
+          <button className="btn" onClick={goNextMonth}>▶</button>
         </div>
       </div>
 
       <p className="muted" style={{ marginTop: 8 }}>
-        Tap any day to add a note. Notes auto-save to this browser (local).
+        Tap any day to add a note. Notes save to your Supabase database.
       </p>
 
+      {err ? (
+        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)", marginTop: 12 }}>
+          <b style={{ color: "salmon" }}>Error:</b> {err}
+        </div>
+      ) : null}
+
       <div className="card" style={{ padding: 12 }}>
-        {/* Weekday header (sticky on mobile) */}
         <div className="weekdaySticky" style={{ marginBottom: 10 }}>
           <div className="weekdayGrid">
             {WEEKDAYS.map((w) => (
-              <div
-                key={w}
-                className="muted"
-                style={{ fontWeight: 800, textAlign: "center" }}
-              >
+              <div key={w} className="muted" style={{ fontWeight: 800, textAlign: "center" }}>
                 {w}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Calendar grid */}
         <div className="daysGrid">
           {grid.map((cell) => {
             const hasNote = !!cell.note?.trim();
@@ -368,23 +380,11 @@ export default function SalesCalendar() {
                   border: cell.isToday
                     ? "1px solid rgba(255,255,255,0.45)"
                     : "1px solid rgba(255,255,255,0.08)",
-                  background: hasNote
-                    ? "rgba(255,255,255,0.06)"
-                    : "rgba(0,0,0,0.0)",
+                  background: hasNote ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.0)",
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
-                >
-                  <div
-                    className="dayNum"
-                    style={{ fontWeight: 900, color: "#ffffff", fontSize: 16 }}
-                  >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <div className="dayNum" style={{ fontWeight: 900, color: "#ffffff", fontSize: 16 }}>
                     {cell.d}
                   </div>
 
@@ -407,9 +407,7 @@ export default function SalesCalendar() {
                     WebkitBoxOrient: "vertical",
                   }}
                 >
-                  {hasNote
-                    ? cell.note
-                    : " "}
+                  {hasNote ? cell.note : " "}
                 </div>
               </button>
             );
@@ -417,7 +415,6 @@ export default function SalesCalendar() {
         </div>
       </div>
 
-      {/* Note editor (simple modal) */}
       {selectedDate && (
         <div
           style={{
@@ -432,16 +429,10 @@ export default function SalesCalendar() {
           }}
           onClick={closeEditor}
         >
-          <div
-            className="card"
-            style={{ width: "min(720px, 100%)", padding: 14 }}
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="card" style={{ width: "min(720px, 100%)", padding: 14 }} onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ alignItems: "center" }}>
               <h2 style={{ margin: 0 }}>Note for {selectedDate}</h2>
-              <button className="btn" onClick={closeEditor}>
-                Close
-              </button>
+              <button className="btn" onClick={closeEditor}>Close</button>
             </div>
 
             <label className="label" style={{ marginTop: 10 }}>
@@ -456,10 +447,10 @@ export default function SalesCalendar() {
             />
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-              <button className="btn primary" onClick={saveEditor}>
+              <button className="btn primary" onClick={() => void saveEditor()}>
                 Save Note
               </button>
-              <button className="btn" onClick={clearNote}>
+              <button className="btn" onClick={() => void clearNote()}>
                 Delete Note
               </button>
             </div>
