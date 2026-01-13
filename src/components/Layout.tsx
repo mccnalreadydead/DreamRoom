@@ -13,7 +13,19 @@ const tabs = [
 export default function Layout() {
   return (
     <div className="ad-shell">
-      <header className="ad-topbar">
+      {/* ✅ Sticky topbar so it stays at the top on mobile while scrolling */}
+      <header
+        className="ad-topbar"
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 999,
+          background: "rgba(10,10,10,0.92)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          borderBottom: "1px solid rgba(255,255,255,0.10)",
+        }}
+      >
         <div className="ad-brand">
           <div className="ad-brandTitle">Already Dead</div>
           <div className="ad-brandSub">Inventory & Sales</div>
