@@ -1,11 +1,30 @@
+/* =========================================================
+   Already Dead Inventory App - Global Styles
+   Elegant Black + Gold (lightweight, fast)
+   ========================================================= */
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* typography */
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* theme */
+  color-scheme: dark; /* keep consistent dark UI */
+  --ad-bg0: #060608;
+  --ad-bg1: #0a0a10;
+
+  --ad-gold: #d4af37;
+  --ad-gold-soft: rgba(212, 175, 55, 0.22);
+
+  --ad-text: rgba(255, 255, 255, 0.92);
+  --ad-muted: rgba(255, 255, 255, 0.68);
+
+  --ad-card: rgba(255, 255, 255, 0.06);
+  --ad-border: rgba(255, 255, 255, 0.10);
+  --ad-border-gold: rgba(212, 175, 55, 0.22);
+
+  --ad-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -13,56 +32,117 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
+/* IMPORTANT:
+   Remove the Vite demo "center everything" layout.
+   Your app should control layout itself. */
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
+  min-height: 100vh;
+  color: var(--ad-text);
+
+  background:
+    radial-gradient(1200px 700px at 20% 0%, rgba(212,175,55,0.12), transparent 55%),
+    radial-gradient(900px 600px at 80% 20%, rgba(212,175,55,0.08), transparent 55%),
+    linear-gradient(180deg, var(--ad-bg0), var(--ad-bg1));
+}
+
+/* subtle “elven” diagonal shimmer overlay (no images, very light) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(212,175,55,0.06) 0px,
+      rgba(212,175,55,0.06) 1px,
+      transparent 1px,
+      transparent 18px
+    );
+  opacity: 0.18;
+  mix-blend-mode: screen;
+  z-index: 0;
+}
+
+/* Ensure your React app sits above the overlay */
+#root {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Links */
+a {
+  font-weight: 600;
+  color: rgba(212, 175, 55, 0.9);
+  text-decoration: none;
+}
+a:hover {
+  color: rgba(212, 175, 55, 1);
+  text-decoration: underline;
 }
 
+/* Generic buttons (your app also has .btn classes; this is a safe base) */
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
+  border-radius: 12px;
+  border: 1px solid var(--ad-border);
+  padding: 0.6em 1.0em;
   font-size: 1em;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
-  background-color: #1a1a1a;
+  color: var(--ad-text);
+  background: rgba(0, 0, 0, 0.18);
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: transform 0.08s ease, border-color 0.2s ease, background 0.2s ease;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: var(--ad-border-gold);
+  background: rgba(212, 175, 55, 0.10);
+}
+button:active {
+  transform: translateY(1px);
 }
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  outline: 2px solid rgba(212,175,55,0.35);
+  outline-offset: 2px;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Utility styles that match your app’s classes */
+.card, .ad-card {
+  background: var(--ad-card);
+  border: 1px solid var(--ad-border);
+  box-shadow: var(--ad-shadow);
+  border-radius: 16px;
+}
+
+.muted {
+  color: var(--ad-muted);
+}
+
+/* If your app uses these common classes, this helps on mobile */
+.page {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: 14px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+/* Keep text selection readable on dark */
+::selection {
+  background: rgba(212,175,55,0.25);
+}
+
+/* Mobile polish */
+@media (max-width: 640px) {
+  .page { padding: 12px; }
 }

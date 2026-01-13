@@ -3,61 +3,63 @@ import { supabase } from "../supabaseClient";
 
 type SaleRow = {
   id: number;
-  date: string | null; // YYYY-MM-DD
-  item: string;
+  date: string | null;       // YYYY-MM-DD
+  item: string | null;
   units_sold: number | null;
   profit: number | null;
   note: string | null;
 };
 
-function toNum(v: any) {
-  if (v == null || v === "") return null;
-  const cleaned = String(v).trim().replace(/[^0-9.-]/g, "");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+function todayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function yyyy(dateStr: string | null) {
-  return dateStr ? dateStr.slice(0, 4) : null;
+function toInt(v: any): number {
+  const n = Math.floor(Number(String(v).replace(/[^0-9-]/g, "")));
+  return Number.isFinite(n) ? n : 0;
 }
-function mm(dateStr: string | null) {
-  return dateStr ? dateStr.slice(5, 7) : null;
+
+function toNum(v: any): number {
+  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
 }
 
 export default function Sales() {
   const [rows, setRows] = useState<SaleRow[]>([]);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
+  const [inventoryItems, setInventoryItems] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
-  // Add form
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [item, setItem] = useState("");
-  const [unitsSold, setUnitsSold] = useState("1");
-  const [profit, setProfit] = useState("");
-  const [note, setNote] = useState("");
-
-  // Filters
-  const [yearFilter, setYearFilter] = useState<string>("All");
-  const [monthFilter, setMonthFilter] = useState<string>("All");
+  // new sale form
+  const [date, setDate] = useState<string>(todayISO());
+  const [item, setItem] = useState<string>("");
+  const [units, setUnits] = useState<number>(1);
+  const [profit, setProfit] = useState<number>(0);
+  const [note, setNote] = useState<string>("");
 
   async function load() {
-    setError("");
-    setStatus("Loading sales...");
+    setLoading(true);
+    setErr("");
 
-    const { data, error } = await supabase
-      .from("Sales") // IMPORTANT: exact table name
+    const inv = await supabase.from("inventory").select("item").order("item", { ascending: true });
+    if (inv.error) setErr(inv.error.message);
+    setInventoryItems((inv.data ?? []).map((x: any) => x.item));
+
+    // NOTE: your table in Supabase is named Sales (capital S) in the UI
+    const sales = await supabase
+      .from("Sales")
       .select("id,date,item,units_sold,profit,note")
       .order("date", { ascending: false })
-      .limit(2000);
+      .order("id", { ascending: false });
 
-    if (error) {
-      setError(error.message);
-      setStatus("");
-      return;
-    }
+    if (sales.error) setErr(sales.error.message);
+    setRows((sales.data as any) ?? []);
 
-    setRows((data as SaleRow[]) ?? []);
-    setStatus(`Loaded ${data?.length ?? 0} sale(s).`);
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -65,254 +67,214 @@ export default function Sales() {
   }, []);
 
   async function addSale() {
-    setError("");
-    setStatus("");
-
-    const payload = {
-      date: date || null,
-      item: item.trim(),
-      units_sold: Math.trunc(toNum(unitsSold) ?? 0),
-      profit: toNum(profit),
-      note: note.trim() || null,
-    };
-
-    if (!payload.date) return setError("Date is required.");
-    if (!payload.item) return setError("Item is required.");
-
-    setStatus("Saving sale...");
-    const { error } = await supabase.from("Sales").insert([payload]);
-    if (error) {
-      setError(error.message);
-      setStatus("");
+    if (!item.trim()) {
+      alert("Pick an item.");
       return;
     }
 
-    setItem("");
-    setUnitsSold("1");
-    setProfit("");
+    setErr("");
+
+    // 1) insert sale
+    const { error: insErr } = await supabase.from("Sales").insert([
+      {
+        date,
+        item: item.trim(),
+        units_sold: units,
+        profit,
+        note: note.trim() || null,
+      },
+    ]);
+
+    if (insErr) {
+      setErr(insErr.message);
+      return;
+    }
+
+    // 2) deduct inventory qty for that item
+    // (simple + reliable approach: read qty, update qty)
+    const invRow = await supabase
+      .from("inventory")
+      .select("id,qty")
+      .eq("item", item.trim())
+      .maybeSingle();
+
+    if (invRow.data?.id != null) {
+      const currentQty = Number(invRow.data.qty ?? 0);
+      const nextQty = Math.max(0, currentQty - Number(units ?? 0));
+
+      const upd = await supabase.from("inventory").update({ qty: nextQty }).eq("id", invRow.data.id);
+      if (upd.error) {
+        // Sale still saved; inventory update failed
+        setErr(`Sale saved, but inventory could not update: ${upd.error.message}`);
+      }
+    } else {
+      // not found: sale still saved, just no inventory row to deduct
+      setErr("Sale saved, but no matching inventory item was found to deduct from.");
+    }
+
+    // reset form
+    setUnits(1);
+    setProfit(0);
     setNote("");
 
-    setStatus("✅ Saved. Refreshing...");
     await load();
   }
 
-  async function deleteSale(row: SaleRow) {
-    const ok = window.confirm(`Delete sale "${row.item}" on ${row.date}?`);
+  async function deleteSale(id: number) {
+    const ok = confirm("Delete this sale entry?");
     if (!ok) return;
 
-    setError("");
-    setStatus("Deleting sale...");
-
-    const { error } = await supabase.from("Sales").delete().eq("id", row.id);
-    if (error) {
-      setError(error.message);
-      setStatus("");
-      return;
-    }
-
-    setStatus("✅ Deleted. Refreshing...");
+    setErr("");
+    const { error } = await supabase.from("Sales").delete().eq("id", id);
+    if (error) setErr(error.message);
     await load();
   }
 
-  const availableYears = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of rows) {
-      const y = yyyy(r.date);
-      if (y) set.add(y);
-    }
-    return ["All", ...Array.from(set).sort((a, b) => b.localeCompare(a))];
+  const totalProfit = useMemo(() => {
+    return rows.reduce((sum, r) => sum + Number(r.profit ?? 0), 0);
   }, [rows]);
-
-  const availableMonths = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of rows) {
-      const m = mm(r.date);
-      if (m) set.add(m);
-    }
-    return ["All", ...Array.from(set).sort()];
-  }, [rows]);
-
-  const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      const y = yyyy(r.date);
-      const m = mm(r.date);
-      if (yearFilter !== "All" && y !== yearFilter) return false;
-      if (monthFilter !== "All" && m !== monthFilter) return false;
-      return true;
-    });
-  }, [rows, yearFilter, monthFilter]);
-
-  const profitFiltered = useMemo(() => filtered.reduce((sum, r) => sum + Number(r.profit || 0), 0), [filtered]);
-  const profitAll = useMemo(() => rows.reduce((sum, r) => sum + Number(r.profit || 0), 0), [rows]);
 
   return (
-    <div style={{ padding: 16, maxWidth: 1100, margin: "0 auto" }}>
-      <style>{`
-        .grid { display: grid; gap: 12px; }
-        .twoCol { grid-template-columns: 1fr 1fr; }
-        .card { border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.04); }
-        .btnRow { display:flex; gap: 8px; flex-wrap: wrap; }
-        input, select { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25); color: inherit; }
-        button { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: inherit; cursor: pointer; }
-        button:hover { background: rgba(255,255,255,0.10); }
-        .danger { border-color: rgba(255,80,80,0.35); }
-        .danger:hover { background: rgba(255,80,80,0.15); }
-        .muted { opacity: 0.85; }
-        .tableWrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.10); text-align: left; white-space: nowrap; }
-        .mobileOnly { display: none; }
-        .desktopOnly { display: block; }
-        @media (max-width: 700px) {
-          .twoCol { grid-template-columns: 1fr; }
-          .mobileOnly { display: block; }
-          .desktopOnly { display: none; }
-        }
-      `}</style>
+    <div className="page">
+      <div className="row" style={{ alignItems: "center" }}>
+        <h1 style={{ margin: 0 }}>Sales</h1>
+        <button className="btn" onClick={load} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
 
-      <h2>Sales</h2>
+      <p className="muted" style={{ marginTop: 8 }}>
+        Total profit (all time): <b>${totalProfit.toFixed(2)}</b>
+      </p>
 
-      {status && <p className="muted">{status}</p>}
-      {error && <p style={{ color: "salmon" }}>{error}</p>}
+      {err ? (
+        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
+          <b style={{ color: "salmon" }}>Error:</b> {err}
+        </div>
+      ) : null}
 
-      <div className="grid twoCol" style={{ marginTop: 12 }}>
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Add Sale</h3>
+      <div className="card" style={{ padding: 12, marginTop: 12 }}>
+        <h2 style={{ marginTop: 0 }}>Add Sale</h2>
 
-          <div className="grid">
-            <label>
-              Date
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </label>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(12, 1fr)",
+            gap: 10,
+          }}
+        >
+          <div style={{ gridColumn: "span 3" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Date</div>
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
 
-            <label>
-              Item
-              <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="SM7B" />
-            </label>
+          <div style={{ gridColumn: "span 4" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Item</div>
+            <select className="input" value={item} onChange={(e) => setItem(e.target.value)}>
+              <option value="">Select…</option>
+              {inventoryItems.map((it) => (
+                <option key={it} value={it}>{it}</option>
+              ))}
+            </select>
+          </div>
 
-            <div className="grid twoCol">
-              <label>
-                Units sold
-                <input value={unitsSold} onChange={(e) => setUnitsSold(e.target.value)} inputMode="numeric" />
-              </label>
-              <label>
-                Profit
-                <input value={profit} onChange={(e) => setProfit(e.target.value)} inputMode="decimal" />
-              </label>
-            </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Units</div>
+            <input
+              className="input"
+              value={units}
+              onChange={(e) => setUnits(toInt(e.target.value))}
+            />
+          </div>
 
-            <label>
-              Note (optional)
-              <input value={note} onChange={(e) => setNote(e.target.value)} />
-            </label>
+          <div style={{ gridColumn: "span 3" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Profit ($)</div>
+            <input
+              className="input"
+              value={profit}
+              onChange={(e) => setProfit(toNum(e.target.value))}
+            />
+          </div>
 
-            <div className="btnRow">
-              <button onClick={addSale}>Save Sale</button>
-              <button onClick={load}>Refresh</button>
-            </div>
+          <div style={{ gridColumn: "span 12" }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Note (optional)</div>
+            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+
+          <div style={{ gridColumn: "span 12", display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="btn primary" onClick={addSale}>Save Sale</button>
           </div>
         </div>
 
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Filter</h3>
-
-          <div className="grid">
-            <label>
-              Year
-              <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}>
-                {availableYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Month
-              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
-                {availableMonths.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="muted">
-              Filtered profit: <b>{profitFiltered.toFixed(2)}</b>
-              <br />
-              All-time profit: <b>{profitAll.toFixed(2)}</b>
-            </div>
-          </div>
-        </div>
+        <style>{`
+          @media (max-width: 760px) {
+            .page .card h2 { font-size: 18px; }
+            .page .card > div[style*="grid-template-columns"] {
+              grid-template-columns: repeat(6, 1fr) !important;
+            }
+            .page .card > div[style*="grid-template-columns"] > div {
+              grid-column: span 6 !important;
+            }
+          }
+        `}</style>
       </div>
 
-      <hr style={{ margin: "16px 0" }} />
+      <div className="card" style={{ padding: 12, marginTop: 12 }}>
+        <h2 style={{ marginTop: 0 }}>Recent Sales</h2>
 
-      {/* MOBILE */}
-      <div className="mobileOnly">
-        <h3>Sales Records ({filtered.length})</h3>
-        <div className="grid">
-          {filtered.map((r) => (
-            <div className="card" key={r.id}>
-              <div style={{ fontWeight: 700 }}>{r.item}</div>
-              <div className="muted" style={{ marginTop: 6 }}>
-                Date: <b>{r.date ?? ""}</b>
-                <br />
-                Units: <b>{r.units_sold ?? ""}</b>
-                <br />
-                Profit: <b>{r.profit ?? ""}</b>
-                <br />
-                Note: {r.note ?? ""}
-              </div>
-              <div className="btnRow" style={{ marginTop: 10 }}>
-                <button className="danger" onClick={() => deleteSale(r)}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* DESKTOP */}
-      <div className="desktopOnly">
-        <h3>Sales Records ({filtered.length})</h3>
-        <div className="tableWrap">
-          <table>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Item</th>
-                <th>Units</th>
-                <th>Profit</th>
-                <th>Note</th>
-                <th>Actions</th>
+                {["Date", "Item", "Units", "Profit", "Note", "Actions"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: "left",
+                      padding: 10,
+                      borderBottom: "1px solid rgba(255,255,255,0.10)",
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
+
             <tbody>
-              {filtered.map((r) => (
+              {rows.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.date ?? ""}</td>
-                  <td>{r.item}</td>
-                  <td>{r.units_sold ?? ""}</td>
-                  <td>{r.profit ?? ""}</td>
-                  <td>{r.note ?? ""}</td>
-                  <td>
-                    <button className="danger" onClick={() => deleteSale(r)}>
-                      Delete
-                    </button>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    {r.date ?? ""}
+                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <b>{r.item ?? ""}</b>
+                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    {Number(r.units_sold ?? 0)}
+                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    ${Number(r.profit ?? 0).toFixed(2)}
+                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <span className="muted">{r.note ?? ""}</span>
+                  </td>
+                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                    <button className="btn" onClick={() => deleteSale(r.id)}>Delete</button>
                   </td>
                 </tr>
               ))}
-              {!filtered.length && (
+
+              {!rows.length ? (
                 <tr>
-                  <td colSpan={6} className="muted">
-                    No sales yet for this filter.
+                  <td colSpan={6} style={{ padding: 14 }} className="muted">
+                    No sales yet.
                   </td>
                 </tr>
-              )}
+              ) : null}
             </tbody>
           </table>
         </div>
