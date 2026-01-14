@@ -97,7 +97,7 @@ export default function NewProduct() {
   return (
     <div className="page">
       <div className="row">
-        <h1 style={{ margin: 0 }}>New Product</h1>
+        <h1 style={{ margin: 0 }}>Product List</h1>
       </div>
 
       <div

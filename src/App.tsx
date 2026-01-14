@@ -1,3 +1,4 @@
+// src/App.tsx
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import Layout from "./components/Layout";
@@ -8,6 +9,7 @@ import Sales from "./pages/Sales";
 import Tracking from "./pages/Tracking";
 import CalendarPage from "./pages/CalendarPage";
 import NewProduct from "./pages/NewProduct";
+import Clients from "./pages/Clients";
 
 export default function App() {
   return (
@@ -18,6 +20,7 @@ export default function App() {
         <Route path="sales" element={<Sales />} />
         <Route path="tracking" element={<Tracking />} />
         <Route path="calendar" element={<CalendarPage />} />
+        <Route path="clients" element={<Clients />} />
         <Route path="new-product" element={<NewProduct />} />
       </Route>
 

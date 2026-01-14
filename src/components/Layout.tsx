@@ -6,29 +6,24 @@ const tabs = [
   { to: "/inventory", label: "Inventory" },
   { to: "/sales", label: "Sales" },
   { to: "/tracking", label: "Tracking" },
-  { to: "/calendar", label: "Sales Calendar" },
-  { to: "/new-product", label: "New Product" },
+  { to: "/calendar", label: "Event Calendar" }, // ✅ renamed
+  { to: "/clients", label: "Clients" },
+  { to: "/new-product", label: "Product List & Price" },
 ];
 
 export default function Layout() {
   return (
-    <div className="ad-shell">
-      {/* ✅ Sticky topbar so it stays at the top on mobile while scrolling */}
-      <header
-        className="ad-topbar"
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 999,
-          background: "rgba(10,10,10,0.92)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,0.10)",
-        }}
-      >
+    <div className="ad-shell dreamy">
+      {/* Dreamy background layers */}
+      <div className="dream-bg" aria-hidden="true" />
+      <div className="dream-shimmer" aria-hidden="true" />
+      <div className="dream-fog" aria-hidden="true" />
+      <div className="dream-particles" aria-hidden="true" />
+
+      <header className="ad-topbar dreamy-topbar">
         <div className="ad-brand">
-          <div className="ad-brandTitle">Already Dead</div>
-          <div className="ad-brandSub">Inventory & Sales</div>
+          <div className="ad-brandTitle">☁ Dream Room ☁️</div>
+          <div className="ad-brandSub">Soft, dreamy inventory & sales tracking ✨</div>
         </div>
 
         <nav className="ad-tabs" aria-label="Primary navigation">
@@ -45,7 +40,7 @@ export default function Layout() {
         </nav>
       </header>
 
-      <main className="ad-main">
+      <main className="ad-main dreamy-main">
         <Outlet />
       </main>
     </div>

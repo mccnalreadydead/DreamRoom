@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
+type InvType = "D" | "C";
+
 type InventoryRow = {
   id: number;
   item: string;
   qty: number;
   unit_cost: number;
   resale_price: number;
-  create_at?: string | null;
+  inv_type: InvType;
 };
 
 type CatalogItem = {
@@ -34,12 +36,14 @@ function money(n: number) {
 }
 
 export default function Inventory() {
+  const [invType, setInvType] = useState<InvType>("D");
+
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // ✅ always-latest rows for autosave reads (prevents stale saves)
+  // always-latest rows for autosave reads
   const rowsRef = useRef<InventoryRow[]>([]);
   useEffect(() => {
     rowsRef.current = rows;
@@ -57,10 +61,11 @@ export default function Inventory() {
   const [addCost, setAddCost] = useState(0);
   const [addResell, setAddResell] = useState(0);
 
-  async function loadInventory() {
+  async function loadInventory(type: InvType) {
     const { data, error } = await supabase
       .from("inventory")
-      .select("id,item,qty,unit_cost,resale_price,create_at")
+      .select("id,item,qty,unit_cost,resale_price,inv_type")
+      .eq("inv_type", type)
       .order("item", { ascending: true });
 
     if (error) throw error;
@@ -77,11 +82,11 @@ export default function Inventory() {
     setCatalog((data as any) ?? []);
   }
 
-  async function loadAll() {
+  async function loadAll(type: InvType) {
     setLoading(true);
     setErr("");
     try {
-      await Promise.all([loadInventory(), loadCatalog()]);
+      await Promise.all([loadInventory(type), loadCatalog()]);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -90,8 +95,9 @@ export default function Inventory() {
   }
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    void loadAll(invType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invType]);
 
   function openAdd() {
     setAddName("");
@@ -116,17 +122,24 @@ export default function Inventory() {
     await loadCatalog();
   }
 
-  async function ensureInventoryRowExists(itemName: string) {
-    const { data, error } = await supabase.from("inventory").select("id").eq("item", itemName).maybeSingle();
+  async function ensureInventoryRowExists(itemName: string, type: InvType) {
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("id")
+      .eq("item", itemName)
+      .eq("inv_type", type)
+      .maybeSingle();
+
     if (error) throw error;
 
     if (!data?.id) {
       const { error: insErr } = await supabase
         .from("inventory")
-        .insert([{ item: itemName, qty: 0, unit_cost: 0, resale_price: 0 }]);
+        .insert([{ item: itemName, qty: 0, unit_cost: 0, resale_price: 0, inv_type: type }]);
+
       if (insErr) throw insErr;
 
-      await loadInventory();
+      await loadInventory(type);
     }
   }
 
@@ -141,7 +154,7 @@ export default function Inventory() {
     setLoading(true);
     try {
       await upsertCatalogItem(name);
-      await ensureInventoryRowExists(name);
+      await ensureInventoryRowExists(name, invType);
 
       const { error } = await supabase
         .from("inventory")
@@ -150,11 +163,12 @@ export default function Inventory() {
           unit_cost: Math.max(0, Number(addCost || 0)),
           resale_price: Math.max(0, Number(addResell || 0)),
         })
-        .eq("item", name);
+        .eq("item", name)
+        .eq("inv_type", invType);
 
       if (error) throw error;
 
-      await loadInventory();
+      await loadInventory(invType);
       closeAdd();
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -191,6 +205,7 @@ export default function Inventory() {
       qty: Math.max(0, Number(r.qty ?? 0)),
       unit_cost: Math.max(0, Number(r.unit_cost ?? 0)),
       resale_price: Math.max(0, Number(r.resale_price ?? 0)),
+      inv_type: r.inv_type,
     };
 
     const { error } = await supabase.from("inventory").update(payload).eq("id", id);
@@ -243,13 +258,57 @@ export default function Inventory() {
   }, [dirtyIds]);
 
   async function deleteRow(id: number) {
-    const ok = confirm("Delete this inventory item?");
-    if (!ok) return;
-    setErr("");
-    const { error } = await supabase.from("inventory").delete().eq("id", id);
-    if (error) setErr(error.message);
-    await loadInventory();
+  const ok = confirm("Delete this inventory item?");
+  if (!ok) return;
+
+  setErr("");
+  setLoading(true);
+
+  try {
+    // find the row so we know the item name
+    const row = rowsRef.current.find((x) => x.id === id);
+    const itemName = row?.item;
+
+    // ✅ instantly remove from UI so dropdown refreshes right away
+    setRows((prev) => prev.filter((x) => x.id !== id));
+
+    // delete from inventory
+    const delInv = await supabase.from("inventory").delete().eq("id", id);
+    if (delInv.error) throw delInv.error;
+
+    // OPTIONAL: if you want "delete means delete everywhere"
+    if (itemName) {
+      // only delete from item_catalog if it's not used in ANY inventory row (D or C)
+      const check = await supabase
+        .from("inventory")
+        .select("id")
+        .eq("item", itemName)
+        .limit(1);
+
+      if (check.error) throw check.error;
+
+      const stillUsed = (check.data ?? []).length > 0;
+
+      if (!stillUsed) {
+        // remove from catalog
+        const delCat = await supabase.from("item_catalog").delete().eq("name", itemName);
+        if (delCat.error) throw delCat.error;
+
+        // also remove locally so dropdown updates immediately
+        setCatalog((prev) => prev.filter((c) => normKey(c.name) !== normKey(itemName)));
+      }
+    }
+
+    // reload to stay perfectly synced
+    await loadAll(invType);
+  } catch (e: any) {
+    setErr(e?.message ?? String(e));
+    // if something fails, re-sync from server
+    await loadAll(invType);
+  } finally {
+    setLoading(false);
   }
+}
 
   async function bumpQty(id: number, delta: number) {
     const r = rowsRef.current.find((x) => x.id === id);
@@ -272,7 +331,6 @@ export default function Inventory() {
     return out;
   }, [catalog]);
 
-  // ✅ Total inventory resale value (qty * resale_price)
   const totalResaleValue = useMemo(() => {
     return rows.reduce(
       (sum, r) => sum + Math.max(0, Number(r.qty ?? 0)) * Math.max(0, Number(r.resale_price ?? 0)),
@@ -280,29 +338,61 @@ export default function Inventory() {
     );
   }, [rows]);
 
+  const tabTitle = invType === "D" ? "Devan's-Inventory" : "Chad's-Inventory";
+
   return (
-    <div className="page inv-page">
+    <div className="page inv2-page">
       <style>{`
-        .inv-page{ position: relative; isolation: isolate; }
-        .inv-page:before{
+        .inv2-page{ position: relative; isolation: isolate; }
+        .inv2-page:before{
           content:"";
           position: fixed;
           inset: 0;
           pointer-events: none;
           z-index: 0;
           background:
-            radial-gradient(700px 360px at 10% 10%, rgba(212,175,55,0.10), transparent 60%),
-            radial-gradient(520px 360px at 90% 18%, rgba(120,0,0,0.16), transparent 55%),
-            radial-gradient(820px 520px at 50% 95%, rgba(0,0,0,0.85), transparent 55%),
-            linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.80));
-          opacity: .95;
+            radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
+            radial-gradient(560px 420px at 90% 14%, rgba(212,175,55,0.12), transparent 55%),
+            radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
+            linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0.86));
+          opacity: .98;
         }
-        .inv-page > *{ position: relative; z-index: 1; }
+        .inv2-page > *{ position: relative; z-index: 1; }
 
-        .inv-top{ justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .inv-topBtns{ display:flex; gap:10px; flex-wrap: wrap; }
+        .inv2-top{ justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .inv2-topBtns{ display:flex; gap:10px; flex-wrap: wrap; }
 
-        .inv-pill{
+        .inv2-tabs{
+          display:flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items:center;
+          margin-bottom: 10px;
+        }
+        .inv2-tabBtn{
+          padding: 10px 14px;
+          border-radius: 999px;
+          border: 1px solid rgba(120,160,255,0.22);
+          background: linear-gradient(180deg, rgba(18,30,60,0.55), rgba(10,14,28,0.55));
+          color: rgba(255,255,255,0.86);
+          font-weight: 950;
+          letter-spacing: 0.2px;
+          box-shadow: 0 10px 28px rgba(0,0,0,0.25);
+          transition: transform .08s ease, border-color .12s ease, filter .12s ease;
+          user-select: none;
+        }
+        .inv2-tabBtn:hover{ filter: brightness(1.05); }
+        .inv2-tabBtn:active{ transform: translateY(1px); }
+        .inv2-tabBtnActive{
+          border-color: rgba(212,175,55,0.34);
+          box-shadow: 0 14px 40px rgba(0,0,0,0.30);
+          background:
+            radial-gradient(520px 120px at 20% 0%, rgba(212,175,55,0.16), transparent 60%),
+            linear-gradient(180deg, rgba(22,34,70,0.72), rgba(10,14,28,0.62));
+          color: rgba(255,255,255,0.92);
+        }
+
+        .inv2-pill{
           font-size: 12px;
           font-weight: 950;
           padding: 6px 10px;
@@ -313,117 +403,131 @@ export default function Inventory() {
           white-space: nowrap;
         }
 
-        .inv-card{
+        .inv2-card{
           margin-top: 12px;
           padding: 12px;
-          border-radius: 16px;
-          border: 1px solid rgba(212,175,55,0.16);
-          background: rgba(0,0,0,0.40);
-          backdrop-filter: blur(10px);
+          border-radius: 18px;
+          border: 1px solid rgba(120,160,255,0.16);
+          background:
+            radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.08), transparent 60%),
+            radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.06), transparent 60%),
+            rgba(0,0,0,0.42);
+          backdrop-filter: blur(12px);
+          box-shadow: 0 22px 70px rgba(0,0,0,0.35);
         }
 
-        /* ✅ Reduce layout shifting */
-        .inv-tableWrap{ overflow-x: hidden; margin-top: 6px; }
-        .inv-table{ width:100%; border-collapse: collapse; table-layout: fixed; }
-        .inv-table th, .inv-table td { overflow: hidden; text-overflow: ellipsis; }
+        .inv2-tableWrap{ overflow-x: hidden; margin-top: 6px; }
+        .inv2-table{ width:100%; border-collapse: collapse; table-layout: fixed; }
+        .inv2-table th, .inv2-table td { overflow: hidden; text-overflow: ellipsis; }
 
         @media (max-width: 980px){
-          .inv-tableWrap{ overflow-x:auto; }
-          .inv-table{ min-width: 920px; table-layout: auto; }
-          select.input, input.input { font-size: 16px; } /* iOS zoom fix */
+          .inv2-tableWrap{ overflow-x:auto; }
+          .inv2-table{ min-width: 940px; table-layout: auto; }
+          select.inv2-input, input.inv2-input { font-size: 16px; } /* iOS zoom fix */
         }
 
-        .inv-table th{
+        .inv2-table th{
           text-align:left;
-          padding: 7px 8px;
+          padding: 8px 8px;
           border-bottom: 1px solid rgba(255,255,255,0.10);
           color: rgba(255,255,255,0.72);
           font-size: 11px;
-          letter-spacing: 0.35px;
+          letter-spacing: 0.38px;
           font-weight: 950;
           white-space: nowrap;
         }
-        .inv-table td{
-          padding: 7px 8px;
+        .inv2-table td{
+          padding: 8px 8px;
           border-bottom: 1px solid rgba(255,255,255,0.06);
           vertical-align: middle;
         }
 
-        .inv-input{
-          padding: 0.42em 0.65em;
-          height: 36px;
-          line-height: 36px;
+        /* Make inputs match the rest of your app: dark blue glass, white text */
+        .inv2-input{
+          padding: 0.46em 0.70em;
+          height: 38px;
+          line-height: 38px;
           box-sizing: border-box;
-          border-radius: 12px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(255,255,255,0.06);
+          border-radius: 14px;
+          border: 1px solid rgba(120,160,255,0.18);
+          background:
+            linear-gradient(180deg, rgba(18,30,60,0.62), rgba(10,14,28,0.62));
           color: rgba(255,255,255,0.92);
           outline: none;
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.03),
+            0 10px 26px rgba(0,0,0,0.22);
         }
-        .inv-input:focus{
-          border-color: rgba(212,175,55,0.35);
-          box-shadow: 0 0 0 3px rgba(212,175,55,0.10);
+        .inv2-input:focus{
+          border-color: rgba(212,175,55,0.36);
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.03),
+            0 0 0 3px rgba(212,175,55,0.10),
+            0 14px 34px rgba(0,0,0,0.28);
         }
 
-        /* ✅ Dropdown readability */
-        .inv-select{ background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); }
-        .inv-select option, .inv-select optgroup{
-          background: #0b0b0d !important;
+        /* Dropdown readability */
+        .inv2-select{ color: rgba(255,255,255,0.92); }
+        .inv2-select option, .inv2-select optgroup{
+          background: #070a14 !important;
           color: #ffffff !important;
         }
 
-        /* ✅ THIS is the jump fix: prevent wrapping + reserve space for save pill */
-        .inv-itemRow{
+        /* Prevent wrapping + reserve space for save pill */
+        .inv2-itemRow{
           display:flex;
-          gap:8px;
+          gap:10px;
           flex-wrap: nowrap;
           align-items:center;
         }
-        .inv-select{
-          flex: 1 1 auto;
-          min-width: 180px;
-        }
-        .inv-saveState{
-          width: 78px;          /* always the same width */
+        .inv2-select{ flex: 1 1 auto; min-width: 200px; }
+
+        .inv2-saveState{
+          width: 86px;
           text-align: center;
           font-size: 11px;
-          font-weight: 900;
-          padding: 4px 8px;
+          font-weight: 950;
+          padding: 5px 10px;
           border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.06);
-          color: rgba(255,255,255,0.68);
+          border: 1px solid rgba(120,160,255,0.16);
+          background:
+            linear-gradient(180deg, rgba(18,30,60,0.50), rgba(10,14,28,0.50));
+          color: rgba(255,255,255,0.72);
           white-space: nowrap;
           flex: 0 0 auto;
+          box-shadow: 0 10px 26px rgba(0,0,0,0.20);
         }
 
-        .inv-qtyWrap{ display:flex; gap: 8px; align-items:center; }
-        .inv-plus{
-          padding: 0.45em 0.8em;
-          height: 36px;
-          border-radius: 12px;
+        .inv2-qtyWrap{ display:flex; gap: 8px; align-items:center; }
+        .inv2-plus{
+          padding: 0.48em 0.85em;
+          height: 38px;
+          border-radius: 14px;
           font-weight: 950;
-          border: 1px solid rgba(212,175,55,0.20);
-          background: rgba(212,175,55,0.10);
+          border: 1px solid rgba(212,175,55,0.22);
+          background:
+            radial-gradient(420px 120px at 20% 0%, rgba(212,175,55,0.16), transparent 55%),
+            linear-gradient(180deg, rgba(18,30,60,0.55), rgba(10,14,28,0.55));
+          box-shadow: 0 12px 28px rgba(0,0,0,0.22);
         }
 
-        .inv-qty{ width: 78px; }
-        .inv-money{ width: 96px; }
+        .inv2-qty{ width: 86px; }
+        .inv2-money{ width: 110px; }
 
-        .inv-lowPill{
+        .inv2-lowPill{
           font-size: 11px;
           font-weight: 950;
-          padding: 4px 8px;
+          padding: 5px 10px;
           border-radius: 999px;
           border: 1px solid rgba(255,80,80,0.30);
           background: rgba(255,80,80,0.10);
           color: rgba(255,140,140,0.95);
           white-space: nowrap;
         }
-        .inv-okPill{
+        .inv2-okPill{
           font-size: 11px;
           font-weight: 950;
-          padding: 4px 8px;
+          padding: 5px 10px;
           border-radius: 999px;
           border: 1px solid rgba(212,175,55,0.22);
           background: rgba(212,175,55,0.10);
@@ -432,49 +536,70 @@ export default function Inventory() {
         }
 
         /* Modal */
-        .inv-overlay{
+        .inv2-overlay{
           position: fixed; inset:0;
-          background: rgba(0,0,0,0.72);
+          background: rgba(0,0,0,0.74);
           display:flex; align-items:center; justify-content:center;
           padding:14px;
           z-index: 60;
         }
-        .inv-modal{
-          width: min(720px, 100%);
+        .inv2-modal{
+          width: min(740px, 100%);
           padding: 14px;
-          border-radius: 16px;
-          border: 1px solid rgba(212,175,55,0.18);
-          background: rgba(10,10,10,0.86);
-          box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+          border-radius: 18px;
+          border: 1px solid rgba(120,160,255,0.16);
+          background:
+            radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%),
+            radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.08), transparent 60%),
+            rgba(8,10,18,0.88);
+          box-shadow: 0 24px 70px rgba(0,0,0,0.48);
+          backdrop-filter: blur(12px);
         }
-        .inv-modalGrid{
+        .inv2-modalGrid{
           display:grid;
           grid-template-columns: 1fr 1fr;
           gap: 12px;
           margin-top: 12px;
         }
-        .inv-label{
+        .inv2-label{
           font-size: 12px;
           font-weight: 950;
           color: rgba(255,255,255,0.68);
           margin-bottom: 6px;
         }
         @media (max-width: 780px){
-          .inv-modalGrid{ grid-template-columns: 1fr; }
+          .inv2-modalGrid{ grid-template-columns: 1fr; }
         }
       `}</style>
 
-      <div className="row inv-top">
+      <div className="inv2-tabs">
+        <button
+          type="button"
+          className={`inv2-tabBtn ${invType === "D" ? "inv2-tabBtnActive" : ""}`}
+          onClick={() => setInvType("D")}
+        >
+          Devans-Inventory
+        </button>
+        <button
+          type="button"
+          className={`inv2-tabBtn ${invType === "C" ? "inv2-tabBtnActive" : ""}`}
+          onClick={() => setInvType("C")}
+        >
+          Chads-Inventory
+        </button>
+      </div>
+
+      <div className="row inv2-top">
         <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0 }}>Inventory</h1>
-          <span className="inv-pill">Total Resale Value: {money(totalResaleValue)}</span>
+          <h1 style={{ margin: 0 }}>{tabTitle}</h1>
+          <span className="inv2-pill">Total Resale Value: {money(totalResaleValue)}</span>
         </div>
 
-        <div className="inv-topBtns">
+        <div className="inv2-topBtns">
           <button className="btn" type="button" onClick={openAdd}>
             + Add Item
           </button>
-          <button className="btn" type="button" onClick={loadAll} disabled={loading}>
+          <button className="btn" type="button" onClick={() => void loadAll(invType)} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
@@ -486,9 +611,9 @@ export default function Inventory() {
         </div>
       ) : null}
 
-      <div className="card inv-card">
-        <div className="inv-tableWrap">
-          <table className="inv-table">
+      <div className="card inv2-card">
+        <div className="inv2-tableWrap">
+          <table className="inv2-table">
             <thead>
               <tr>
                 {["Item", "Qty", "Cost", "Resell", "Status", "Actions"].map((h) => (
@@ -499,16 +624,16 @@ export default function Inventory() {
 
             <tbody>
               {rows.map((r) => {
-                const low = Number(r.qty ?? 0) < 5;
+                const low = Number(r.qty ?? 0) < 1;
                 const isSaving = !!savingIds[r.id];
                 const isDirty = !!dirtyIds[r.id];
 
                 return (
                   <tr key={r.id}>
                     <td>
-                      <div className="inv-itemRow">
+                      <div className="inv2-itemRow">
                         <select
-                          className="input inv-input inv-select"
+                          className="inv2-input inv2-select"
                           value={r.item}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -531,9 +656,8 @@ export default function Inventory() {
                           <option value="__ADD_NEW__">+ Add new item…</option>
                         </select>
 
-                        {/* ✅ Always reserve space (prevents vertical jump) */}
                         <span
-                          className="inv-saveState"
+                          className="inv2-saveState"
                           style={{ opacity: isSaving || isDirty ? 1 : 0, pointerEvents: "none" }}
                         >
                           {isSaving ? "Saving…" : isDirty ? "Edited" : "Saved"}
@@ -542,19 +666,19 @@ export default function Inventory() {
                     </td>
 
                     <td>
-                      <div className="inv-qtyWrap">
+                      <div className="inv2-qtyWrap">
                         <input
-                          className="input inv-input inv-qty"
+                          className="inv2-input inv2-qty"
                           style={{
                             borderColor: low ? "rgba(255,80,80,0.55)" : undefined,
-                            color: low ? "rgba(255,120,120,1)" : undefined,
-                            fontWeight: 900, // stable font weight = less micro-shift
+                            color: low ? "rgba(255,140,140,1)" : undefined,
+                            fontWeight: 950,
                           }}
                           value={r.qty ?? 0}
                           onChange={(e) => updateRowLocal(r.id, { qty: toNum(e.target.value, 0) })}
                           onBlur={() => void saveRowById(r.id)}
                         />
-                        <button className="btn inv-plus" type="button" onClick={() => void bumpQty(r.id, 1)}>
+                        <button className="btn inv2-plus" type="button" onClick={() => void bumpQty(r.id, 1)}>
                           +
                         </button>
                       </div>
@@ -562,7 +686,7 @@ export default function Inventory() {
 
                     <td>
                       <input
-                        className="input inv-input inv-money"
+                        className="inv2-input inv2-money"
                         value={r.unit_cost ?? 0}
                         onChange={(e) => updateRowLocal(r.id, { unit_cost: toNum(e.target.value, 0) })}
                         onBlur={() => void saveRowById(r.id)}
@@ -571,14 +695,14 @@ export default function Inventory() {
 
                     <td>
                       <input
-                        className="input inv-input inv-money"
+                        className="inv2-input inv2-money"
                         value={r.resale_price ?? 0}
                         onChange={(e) => updateRowLocal(r.id, { resale_price: toNum(e.target.value, 0) })}
                         onBlur={() => void saveRowById(r.id)}
                       />
                     </td>
 
-                    <td>{low ? <span className="inv-lowPill">Low</span> : <span className="inv-okPill">OK</span>}</td>
+                    <td>{low ? <span className="inv2-lowPill">Low</span> : <span className="inv2-okPill">OK</span>}</td>
 
                     <td>
                       <button className="btn" type="button" onClick={() => void deleteRow(r.id)}>
@@ -592,7 +716,7 @@ export default function Inventory() {
               {!rows.length ? (
                 <tr>
                   <td colSpan={6} className="muted" style={{ padding: 12 }}>
-                    No items yet. Click “Add Item” to create your first one.
+                    No items yet in {tabTitle}. Click “Add Item” to create your first one.
                   </td>
                 </tr>
               ) : null}
@@ -602,30 +726,36 @@ export default function Inventory() {
       </div>
 
       {addOpen ? (
-        <div className="inv-overlay" onClick={closeAdd}>
-          <div className="inv-modal card" onClick={(e) => e.stopPropagation()}>
+        <div className="inv2-overlay" onClick={closeAdd}>
+          <div className="inv2-modal" onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ alignItems: "center" }}>
-              <h2 style={{ margin: 0 }}>Add Item</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <h2 style={{ margin: 0 }}>Add Item</h2>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Adds to <b>{tabTitle}</b> and your dropdown catalog.
+                </div>
+              </div>
+
               <button className="btn" type="button" onClick={closeAdd}>
                 Close
               </button>
             </div>
 
-            <div className="inv-modalGrid">
+            <div className="inv2-modalGrid">
               <div>
-                <div className="inv-label">Name</div>
+                <div className="inv2-label">Name</div>
                 <input
-                  className="input inv-input"
+                  className="inv2-input"
                   value={addName}
                   onChange={(e) => setAddName(e.target.value)}
-                  placeholder="Example: Custom named mic"
+                  placeholder="Example: Charger, Part, Product name..."
                 />
               </div>
 
               <div>
-                <div className="inv-label">Starting Qty</div>
+                <div className="inv2-label">Starting Qty</div>
                 <input
-                  className="input inv-input"
+                  className="inv2-input"
                   type="number"
                   min={0}
                   value={addQty}
@@ -634,9 +764,9 @@ export default function Inventory() {
               </div>
 
               <div>
-                <div className="inv-label">Unit Cost</div>
+                <div className="inv2-label">Unit Cost</div>
                 <input
-                  className="input inv-input"
+                  className="inv2-input"
                   type="number"
                   min={0}
                   value={addCost}
@@ -645,9 +775,9 @@ export default function Inventory() {
               </div>
 
               <div>
-                <div className="inv-label">Resale Price</div>
+                <div className="inv2-label">Resale Price</div>
                 <input
-                  className="input inv-input"
+                  className="inv2-input"
                   type="number"
                   min={0}
                   value={addResell}
@@ -666,7 +796,7 @@ export default function Inventory() {
             </div>
 
             <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-              This adds it to your dropdown list AND creates it in inventory so you can track qty.
+              Pro tip: You can also select “+ Add new item…” from the dropdown.
             </p>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
 type RangeKey = "current" | "last" | "3" | "6" | "12";
@@ -17,6 +18,13 @@ function ymKey(d: Date) {
 function labelMonth(d: Date) {
   return `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`;
 }
+function todayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 /**
  * If your Sales page is already working, Dashboard should point to the SAME table.
@@ -29,11 +37,23 @@ function money(n: number) {
   return `$${v.toFixed(2)}`;
 }
 
+type NextEvent = {
+  date: string;           // YYYY-MM-DD
+  title: string;          // derived from bullets/details
+  bullets: string[];
+  details: string | null;
+};
+
 export default function Dashboard() {
   const [sales, setSales] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [range, setRange] = useState<RangeKey>("6");
+
+  // Next Event widget state
+  const [nextEvent, setNextEvent] = useState<NextEvent | null>(null);
+  const [eventErr, setEventErr] = useState("");
+  const [eventLoading, setEventLoading] = useState(false);
 
   const now = new Date();
 
@@ -67,8 +87,53 @@ export default function Dashboard() {
     setLoading(false);
   }
 
+  async function loadNextEvent() {
+    setEventLoading(true);
+    setEventErr("");
+
+    // We expect calendar_notes(note_date, bullets[], details)
+    const { data, error } = await supabase
+      .from("calendar_notes")
+      .select("note_date, bullets, details")
+      .gte("note_date", todayISO())
+      .order("note_date", { ascending: true })
+      .limit(1);
+
+    if (error) {
+      setEventErr(error.message);
+      setNextEvent(null);
+      setEventLoading(false);
+      return;
+    }
+
+    const row: any = (data ?? [])[0];
+    if (!row?.note_date) {
+      setNextEvent(null);
+      setEventLoading(false);
+      return;
+    }
+
+    const bullets: string[] = Array.isArray(row.bullets) ? row.bullets.filter(Boolean).map(String) : [];
+    const details: string | null = row.details != null ? String(row.details) : null;
+
+    const title =
+      bullets[0] ||
+      (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event");
+
+    setNextEvent({
+      date: String(row.note_date),
+      title,
+      bullets,
+      details,
+    });
+
+    setEventLoading(false);
+  }
+
   useEffect(() => {
     loadSales();
+    loadNextEvent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Date/profit detection (safe)
@@ -133,7 +198,7 @@ export default function Dashboard() {
     <div className="page dash-page">
       <div className="row dash-top">
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <h1 style={{ margin: 0 }}>Dashboard</h1>
+          <h1 style={{ margin: 0 }}>☁️ Welcome To The Dream ☁️</h1>
           <span className="dash-sigil">⟡</span>
         </div>
 
@@ -154,12 +219,20 @@ export default function Dashboard() {
             12 mo
           </button>
 
-          <button className="btn" onClick={loadSales} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
+          <button
+            className="btn"
+            onClick={() => {
+              loadSales();
+              loadNextEvent();
+            }}
+            disabled={loading || eventLoading}
+          >
+            {loading || eventLoading ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
 
+      {/* KPIs + Next Event */}
       <div className="dash-sub">
         <div className="dash-kpi">
           <div className="dash-kpiLabel">{windowMonths.title}</div>
@@ -179,6 +252,46 @@ export default function Dashboard() {
               return best ? best.label : "—";
             })()}
           </div>
+        </div>
+
+        <div className="dash-kpi dash-nextEvent">
+          <div className="dash-kpiLabel">Next Event</div>
+
+          {eventErr ? (
+            <div className="dash-nextSmall" style={{ color: "salmon" }}>
+              {eventErr}
+            </div>
+          ) : nextEvent ? (
+            <>
+              <div className="dash-kpiValue" style={{ fontSize: 16 }}>
+                {nextEvent.title}
+              </div>
+              <div className="dash-nextSmall">
+                <b>{nextEvent.date}</b>
+                {nextEvent.bullets?.length ? ` • ${nextEvent.bullets.length} bullet(s)` : ""}
+              </div>
+              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Link to="/calendar" className="btn primary" style={{ textDecoration: "none" }}>
+                  Open Calendar
+                </Link>
+                <button className="btn" type="button" onClick={loadNextEvent} disabled={eventLoading}>
+                  {eventLoading ? "Loading…" : "Refresh"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="dash-kpiValue" style={{ fontSize: 16 }}>
+                No upcoming events
+              </div>
+              <div className="dash-nextSmall">Add one in your Event Calendar ✨</div>
+              <div style={{ marginTop: 10 }}>
+                <Link to="/calendar" className="btn primary" style={{ textDecoration: "none" }}>
+                  Add Event
+                </Link>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -235,14 +348,6 @@ export default function Dashboard() {
 
       <style>{`
         .dash-page{ position: relative; isolation: isolate; }
-        .dash-page::before{
-          content:""; position: fixed; inset:0; pointer-events:none; z-index:0;
-          background:
-            radial-gradient(900px 360px at 18% 10%, rgba(212,175,55,0.12), transparent 60%),
-            radial-gradient(720px 340px at 82% 18%, rgba(80,130,255,0.08), transparent 62%),
-            radial-gradient(500px 220px at 40% 80%, rgba(160,0,0,0.08), transparent 70%),
-            linear-gradient(180deg, rgba(0,0,0,0.50), rgba(0,0,0,0.82));
-        }
         .dash-page > *{ position: relative; z-index: 1; }
 
         .dash-top{ align-items:center; gap:10px; flex-wrap: wrap; }
@@ -264,27 +369,37 @@ export default function Dashboard() {
         .dash-sub{
           margin-top: 10px;
           display:grid;
-          grid-template-columns: repeat(3, minmax(0,1fr));
+          grid-template-columns: repeat(4, minmax(0,1fr));
           gap: 10px;
         }
         .dash-kpi{
           border-radius: 16px;
-          border: 1px solid rgba(212,175,55,0.18);
+          border: 1px solid rgba(255,255,255,0.10);
           background: rgba(255,255,255,0.05);
           padding: 10px;
         }
         .dash-kpiLabel{ font-size: 12px; font-weight: 900; color: rgba(255,255,255,0.70); }
         .dash-kpiValue{ margin-top: 6px; font-size: 18px; font-weight: 900; }
+        .dash-nextSmall{ margin-top: 6px; font-size: 12px; font-weight: 850; color: rgba(255,255,255,0.68); }
+
+        .dash-nextEvent{
+          border-color: rgba(var(--violet), 0.25);
+          background:
+            radial-gradient(220px 140px at 20% 10%, rgba(var(--violet),0.18), transparent 60%),
+            radial-gradient(220px 140px at 90% 60%, rgba(var(--pink),0.10), transparent 62%),
+            rgba(255,255,255,0.05);
+          box-shadow:
+            0 0 0 1px rgba(var(--violet),0.10) inset,
+            0 16px 40px rgba(var(--violet),0.10);
+        }
 
         .dash-card{
           margin-top: 10px;
           padding: 10px;
-          border: 1px solid rgba(212,175,55,0.12);
           background: rgba(0,0,0,0.28);
         }
         .dash-hint{ font-size: 12px; font-weight: 800; color: rgba(255,255,255,0.65); }
 
-        /* Monthly breakdown table ABOVE chart */
         .dash-breakdown{
           margin-top: 10px;
           border-radius: 14px;
@@ -313,11 +428,9 @@ export default function Dashboard() {
           color: rgba(255,255,255,0.84);
         }
         .dash-breakRow:last-child{ border-bottom:none; }
-        .dash-breakMonth{ color: rgba(255,255,255,0.86); }
         .dash-breakProfit{ text-align:right; color: rgba(255,255,255,0.78); white-space: nowrap; }
         .dash-breakPct{ text-align:right; color: rgba(212,175,55,0.78); white-space: nowrap; }
 
-        /* Vertical bar chart (normal size), improved spacing */
         .dash-chart{
           margin-top: 12px;
           display:grid;
@@ -349,25 +462,17 @@ export default function Dashboard() {
         .dash-barLabel{ font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.85); text-align:center; line-height:1.1; }
         .dash-barValue{ font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.62); text-align:center; }
 
-        /* Mobile polish: table becomes easier to read, chart bars become compact */
         @media (max-width: 760px){
           .dash-sub{ grid-template-columns: 1fr; }
 
-          .dash-breakHead{ padding: 10px 8px; }
-          .dash-breakRow{ padding: 10px 8px; }
-          .dash-breakHead, .dash-breakRow{
-            grid-template-columns: 1fr auto;
-          }
-          .dash-breakPct{ display:none; } /* hides 3rd column on mobile for readability */
+          .dash-breakHead, .dash-breakRow{ grid-template-columns: 1fr auto; }
+          .dash-breakPct{ display:none; }
 
-          .dash-chart{
-            grid-auto-columns: minmax(74px, 1fr);
-            gap: 8px;
-          }
+          .dash-chart{ grid-auto-columns: minmax(74px, 1fr); gap: 8px; }
           .dash-barCol{ min-width:74px; }
           .dash-barTrack{ height: 160px; }
           .dash-barFill{ width: 50%; }
-          .dash-barValue{ display:none; } /* hides value under bar on mobile to reduce clutter */
+          .dash-barValue{ display:none; }
         }
       `}</style>
     </div>

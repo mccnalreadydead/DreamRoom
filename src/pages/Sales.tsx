@@ -1,3 +1,4 @@
+// src/pages/Sales.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useLocalDraft } from "../hooks/useLocalDraft";
@@ -9,12 +10,22 @@ type SaleRow = {
   units_sold: number | null;
   profit: number | null;
   note: string | null;
+  client_id: number | null;
 };
 
 type SaleLine = {
   item: string;
   units: number;
   profit: number;
+};
+
+type ClientRow = {
+  id: number;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  last_spoken: string | null; // YYYY-MM-DD
+  notes: string | null;
 };
 
 function todayISO() {
@@ -36,13 +47,11 @@ function toNum(v: any): number {
 }
 
 function getYear(iso: string | null) {
-  // "YYYY-MM-DD" -> "YYYY"
   if (!iso || iso.length < 4) return "";
   return iso.slice(0, 4);
 }
 
 function getMonth(iso: string | null) {
-  // "YYYY-MM-DD" -> "01".."12"
   if (!iso || iso.length < 7) return "";
   return iso.slice(5, 7);
 }
@@ -54,26 +63,68 @@ function monthLabel(mm: string) {
   return d.toLocaleString(undefined, { month: "long" });
 }
 
+function norm(s: any) {
+  return String(s ?? "").trim();
+}
+
 export default function Sales() {
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [inventoryItems, setInventoryItems] = useState<string[]>([]);
+  const [clients, setClients] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // ✅ Filters: Year + Month dropdowns (both have "All")
+  // Filters
   const [filterYear, setFilterYear] = useState<string>("all");
-  const [filterMonth, setFilterMonth] = useState<string>("all"); // "01".."12" or "all"
+  const [filterMonth, setFilterMonth] = useState<string>("all");
 
-  // ✅ Draft autosave (so leaving the page doesn't wipe the form)
+  // Draft autosave
   const { state: draft, setState: setDraft, clear: clearDraft } = useLocalDraft("dead-inventory:sales:draft", {
     date: todayISO(),
     note: "",
+    client_id: null as number | null,
     lines: [{ item: "", units: 1, profit: 0 }] as SaleLine[],
   });
 
   const date = draft.date as string;
-  const note = draft.note as string;
+  const note = (draft.note as string) ?? "";
   const lines = draft.lines as SaleLine[];
+  const clientId = (draft.client_id as number | null) ?? null;
+
+  // Client picker state (search)
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
+
+  // Quick add client modal
+  const [clientAddOpen, setClientAddOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [newClientLastSpoken, setNewClientLastSpoken] = useState<string>("");
+  const [newClientNotes, setNewClientNotes] = useState("");
+
+  const clientMap = useMemo(() => {
+    const m = new Map<number, ClientRow>();
+    for (const c of clients) m.set(c.id, c);
+    return m;
+  }, [clients]);
+
+  const selectedClient = useMemo(() => {
+    if (!clientId) return null;
+    return clientMap.get(clientId) ?? null;
+  }, [clientId, clientMap]);
+
+  const filteredClients = useMemo(() => {
+    const q = norm(clientSearch).toLowerCase();
+    if (!q) return clients.slice(0, 30);
+    const out = clients.filter((c) => {
+      const name = String(c.name ?? "").toLowerCase();
+      const email = String(c.email ?? "").toLowerCase();
+      const phone = String(c.phone ?? "").toLowerCase();
+      return name.includes(q) || email.includes(q) || phone.includes(q);
+    });
+    return out.slice(0, 50);
+  }, [clients, clientSearch]);
 
   async function load() {
     setLoading(true);
@@ -83,9 +134,17 @@ export default function Sales() {
     if (inv.error) setErr(inv.error.message);
     setInventoryItems((inv.data ?? []).map((x: any) => x.item));
 
+    const cl = await supabase
+      .from("clients")
+      .select("id,name,phone,email,last_spoken,notes")
+      .order("name", { ascending: true });
+
+    if (cl.error) setErr(cl.error.message);
+    setClients((cl.data as any) ?? []);
+
     const sales = await supabase
       .from("Sales")
-      .select("id,date,item,units_sold,profit,note")
+      .select("id,date,item,units_sold,profit,note,client_id")
       .order("date", { ascending: false })
       .order("id", { ascending: false });
 
@@ -96,7 +155,7 @@ export default function Sales() {
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
   function addLine() {
@@ -127,7 +186,6 @@ export default function Sales() {
   }, [lines]);
 
   async function addSale() {
-    // validate at least 1 valid line
     const cleanLines = lines
       .map((ln) => ({
         item: String(ln.item ?? "").trim(),
@@ -143,13 +201,13 @@ export default function Sales() {
 
     setErr("");
 
-    // 1) insert multiple sale rows (one per item line)
     const inserts = cleanLines.map((ln) => ({
       date,
       item: ln.item,
       units_sold: ln.units,
       profit: ln.profit,
       note: String(note || "").trim() || null,
+      client_id: clientId ?? null,
     }));
 
     const { error: insErr } = await supabase.from("Sales").insert(inserts);
@@ -158,8 +216,7 @@ export default function Sales() {
       return;
     }
 
-    // 2) deduct inventory per line item
-    // (read qty -> update qty)
+    // deduct inventory per line item
     for (const ln of cleanLines) {
       const invRow = await supabase.from("inventory").select("id,qty").eq("item", ln.item).maybeSingle();
 
@@ -181,8 +238,7 @@ export default function Sales() {
       }
     }
 
-    // reset form
-    setDraft({ date: todayISO(), note: "", lines: [{ item: "", units: 1, profit: 0 }] });
+    setDraft({ date: todayISO(), note: "", client_id: null, lines: [{ item: "", units: 1, profit: 0 }] });
     clearDraft();
 
     await load();
@@ -202,7 +258,6 @@ export default function Sales() {
     return rows.reduce((sum, r) => sum + Number(r.profit ?? 0), 0);
   }, [rows]);
 
-  // ✅ Build year options from actual data (newest -> oldest)
   const yearOptions = useMemo(() => {
     const seen = new Set<string>();
     const list: string[] = [];
@@ -216,9 +271,6 @@ export default function Sales() {
     return list;
   }, [rows]);
 
-  // ✅ Build month options from actual data.
-  // If a year is selected, only show months that exist in that year.
-  // If year = all, show any months that exist across all years.
   const monthOptions = useMemo(() => {
     const seen = new Set<string>();
     const list: string[] = [];
@@ -231,34 +283,25 @@ export default function Sales() {
       seen.add(m);
       list.push(m);
     }
-
-    // Sort months in calendar order 01..12
     list.sort((a, b) => Number(a) - Number(b));
     return list;
   }, [rows, filterYear]);
 
-  // ✅ If the user switches year, and the current month no longer exists, reset month to All
   useEffect(() => {
     if (filterMonth === "all") return;
-    if (!monthOptions.includes(filterMonth)) {
-      setFilterMonth("all");
-    }
+    if (!monthOptions.includes(filterMonth)) setFilterMonth("all");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterYear, rows]);
 
-  // ✅ Filter + sort rows by date (always ordered by date)
   const filteredRows = useMemo(() => {
     const base = rows.filter((r) => {
       const y = getYear(r.date);
       const m = getMonth(r.date);
-
       const yearOk = filterYear === "all" ? true : y === filterYear;
       const monthOk = filterMonth === "all" ? true : m === filterMonth;
-
       return yearOk && monthOk;
     });
 
-    // Keep predictable order: date desc, then id desc (null dates last)
     base.sort((a, b) => {
       const ad = a.date ?? "";
       const bd = b.date ?? "";
@@ -287,11 +330,148 @@ export default function Sales() {
     return `${monthLabel(filterMonth)} ${filterYear}`;
   }, [filterYear, filterMonth]);
 
+  function openClientPicker() {
+    setClientPickerOpen(true);
+    setClientSearch("");
+  }
+
+  function chooseClient(id: number | null) {
+    setDraft((d: any) => ({ ...d, client_id: id }));
+    setClientPickerOpen(false);
+    setClientSearch("");
+  }
+
+  function openQuickAddClient() {
+    setNewClientName("");
+    setNewClientPhone("");
+    setNewClientEmail("");
+    setNewClientLastSpoken("");
+    setNewClientNotes("");
+    setClientAddOpen(true);
+  }
+
+  async function createClientQuick() {
+    setErr("");
+    const payload = {
+      name: norm(newClientName) || null,
+      phone: norm(newClientPhone) || null,
+      email: norm(newClientEmail) || null,
+      last_spoken: norm(newClientLastSpoken) || null,
+      notes: norm(newClientNotes) || null,
+    };
+
+    const { data, error } = await supabase.from("clients").insert([payload]).select("id").maybeSingle();
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+
+    await load();
+    const newId = (data as any)?.id ?? null;
+    if (newId) {
+      setDraft((d: any) => ({ ...d, client_id: newId }));
+    }
+    setClientAddOpen(false);
+  }
+
   return (
-    <div className="page">
+    <div className="page sales2-page">
+      <style>{`
+        .sales2-page{ position: relative; isolation: isolate; }
+        .sales2-page:before{
+          content:"";
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          z-index: 0;
+          background:
+            radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
+            radial-gradient(560px 420px at 90% 14%, rgba(212,175,55,0.12), transparent 55%),
+            radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
+            linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0.86));
+          opacity: .98;
+        }
+        .sales2-page > *{ position: relative; z-index: 1; }
+
+        .sales2-pill{
+          font-size: 12px;
+          font-weight: 950;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(212,175,55,0.22);
+          background: rgba(212,175,55,0.10);
+          color: rgba(212,175,55,0.95);
+          white-space: nowrap;
+        }
+
+        .sales2-input{
+          padding: 0.46em 0.70em;
+          height: 38px;
+          line-height: 38px;
+          box-sizing: border-box;
+          border-radius: 14px;
+          border: 1px solid rgba(120,160,255,0.18);
+          background: linear-gradient(180deg, rgba(18,30,60,0.62), rgba(10,14,28,0.62));
+          color: rgba(255,255,255,0.92);
+          outline: none;
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), 0 10px 26px rgba(0,0,0,0.22);
+        }
+        .sales2-input:focus{
+          border-color: rgba(212,175,55,0.36);
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), 0 0 0 3px rgba(212,175,55,0.10), 0 14px 34px rgba(0,0,0,0.28);
+        }
+        select.sales2-input option{
+          background: #070a14 !important;
+          color: #ffffff !important;
+        }
+
+        .sales2-clientChip{
+          display:flex;
+          gap: 10px;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(120,160,255,0.16);
+          background: radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.08), transparent 60%),
+                      radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.06), transparent 60%),
+                      rgba(0,0,0,0.42);
+          backdrop-filter: blur(12px);
+          box-shadow: 0 22px 70px rgba(0,0,0,0.35);
+        }
+
+        .sales2-overlay{
+          position: fixed; inset:0;
+          background: rgba(0,0,0,0.74);
+          display:flex; align-items:center; justify-content:center;
+          padding:14px;
+          z-index: 60;
+        }
+        .sales2-modal{
+          width: min(760px, 100%);
+          padding: 14px;
+          border-radius: 18px;
+          border: 1px solid rgba(120,160,255,0.16);
+          background: radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%),
+                      radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.08), transparent 60%),
+                      rgba(8,10,18,0.88);
+          box-shadow: 0 24px 70px rgba(0,0,0,0.48);
+          backdrop-filter: blur(12px);
+        }
+        .sales2-modalGrid{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-top: 12px;
+        }
+        @media (max-width: 780px){
+          .sales2-modalGrid{ grid-template-columns: 1fr; }
+        }
+      `}</style>
+
       <div className="row" style={{ alignItems: "center" }}>
         <h1 style={{ margin: 0 }}>Sales</h1>
-        <button className="btn" onClick={load} disabled={loading}>
+        <button className="btn" onClick={() => void load()} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
         </button>
       </div>
@@ -308,34 +488,79 @@ export default function Sales() {
 
       <div className="card" style={{ padding: 12, marginTop: 12 }}>
         <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Add Sale</h2>
-          <div className="muted" style={{ fontSize: 13 }}>
-            Form total profit: <b>${formTotalProfit.toFixed(2)}</b>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Add Sale</h2>
+            <span className="sales2-pill">Form profit: ${formTotalProfit.toFixed(2)}</span>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 10, marginTop: 10 }}>
+        {/* Client selector (optional) */}
+        <div style={{ marginTop: 10 }}>
+          <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+            Client (optional)
+          </div>
+
+          <div className="sales2-clientChip">
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)", lineHeight: 1.15 }}>
+                {selectedClient?.name?.trim()
+                  ? selectedClient.name
+                  : selectedClient
+                  ? `Client #${selectedClient.id}`
+                  : "No client selected"}
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {selectedClient
+                  ? [selectedClient.email, selectedClient.phone].filter(Boolean).join(" • ") || "No contact details"
+                  : "Tag a client to this sale (searchable)."}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button className="btn" type="button" onClick={openClientPicker}>
+                {selectedClient ? "Change" : "Select"}
+              </button>
+              {selectedClient ? (
+                <button className="btn" type="button" onClick={() => chooseClient(null)}>
+                  Clear
+                </button>
+              ) : null}
+              <button className="btn primary" type="button" onClick={openQuickAddClient}>
+                + New Client
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 10, marginTop: 12 }}>
           <div style={{ gridColumn: "span 4" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
               Date
             </div>
             <input
-              className="input"
+              className="sales2-input"
               type="date"
               value={date}
               onChange={(e) => setDraft((d: any) => ({ ...d, date: e.target.value }))}
+              style={{ width: "100%" }}
             />
           </div>
 
           <div style={{ gridColumn: "span 8" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
               Note (optional, applies to all lines)
             </div>
-            <input className="input" value={note} onChange={(e) => setDraft((d: any) => ({ ...d, note: e.target.value }))} />
+            <input
+              className="sales2-input"
+              value={note}
+              onChange={(e) => setDraft((d: any) => ({ ...d, note: e.target.value }))}
+              style={{ width: "100%" }}
+              placeholder="Optional note for the whole sale..."
+            />
           </div>
 
           <div style={{ gridColumn: "span 12" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
               Items
             </div>
 
@@ -345,19 +570,26 @@ export default function Sales() {
                   key={idx}
                   className="card"
                   style={{
-                    padding: 10,
-                    borderColor: "rgba(255,255,255,0.10)",
+                    padding: 12,
+                    borderColor: "rgba(120,160,255,0.14)",
+                    background: "rgba(0,0,0,0.35)",
                     display: "grid",
                     gridTemplateColumns: "4fr 2fr 2fr auto",
                     gap: 10,
                     alignItems: "center",
+                    borderRadius: 18,
                   }}
                 >
                   <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
                       Item
                     </div>
-                    <select className="input" value={ln.item} onChange={(e) => updateLine(idx, { item: e.target.value })}>
+                    <select
+                      className="sales2-input"
+                      value={ln.item}
+                      onChange={(e) => updateLine(idx, { item: e.target.value })}
+                      style={{ width: "100%" }}
+                    >
                       <option value="">Select…</option>
                       {inventoryItems.map((it) => (
                         <option key={it} value={it}>
@@ -368,17 +600,27 @@ export default function Sales() {
                   </div>
 
                   <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
                       Units
                     </div>
-                    <input className="input" value={ln.units} onChange={(e) => updateLine(idx, { units: toInt(e.target.value) })} />
+                    <input
+                      className="sales2-input"
+                      value={ln.units}
+                      onChange={(e) => updateLine(idx, { units: toInt(e.target.value) })}
+                      style={{ width: "100%" }}
+                    />
                   </div>
 
                   <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
                       Profit ($)
                     </div>
-                    <input className="input" value={ln.profit} onChange={(e) => updateLine(idx, { profit: toNum(e.target.value) })} />
+                    <input
+                      className="sales2-input"
+                      value={ln.profit}
+                      onChange={(e) => updateLine(idx, { profit: toNum(e.target.value) })}
+                      style={{ width: "100%" }}
+                    />
                   </div>
 
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -394,7 +636,7 @@ export default function Sales() {
               <button className="btn" type="button" onClick={addLine}>
                 + Add line
               </button>
-              <button className="btn primary" type="button" onClick={addSale}>
+              <button className="btn primary" type="button" onClick={() => void addSale()}>
                 Save Sale
               </button>
             </div>
@@ -403,16 +645,13 @@ export default function Sales() {
 
         <style>{`
           @media (max-width: 760px) {
-            .page .card h2 { font-size: 18px; }
-            .page .card > div[style*="grid-template-columns: repeat(12"] {
+            .sales2-page .card > div[style*="grid-template-columns: repeat(12"] {
               grid-template-columns: repeat(6, 1fr) !important;
             }
-            .page .card > div[style*="grid-template-columns: repeat(12"] > div {
+            .sales2-page .card > div[style*="grid-template-columns: repeat(12"] > div {
               grid-column: span 6 !important;
             }
-          }
-          @media (max-width: 760px) {
-            .page .card .card[style*="grid-template-columns: 4fr"]{
+            .sales2-page .card .card[style*="grid-template-columns: 4fr"]{
               grid-template-columns: 1fr !important;
             }
           }
@@ -423,16 +662,15 @@ export default function Sales() {
         <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h2 style={{ marginTop: 0 }}>Recent Sales</h2>
 
-          {/* ✅ Clean filters: Year dropdown + Month dropdown + All handled via options */}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
               Year
             </div>
             <select
-              className="input"
+              className="sales2-input"
               value={filterYear}
               onChange={(e) => setFilterYear(e.target.value)}
-              style={{ minWidth: 140, height: 38 }}
+              style={{ minWidth: 140 }}
             >
               <option value="all">All</option>
               {yearOptions.map((y) => (
@@ -442,14 +680,14 @@ export default function Sales() {
               ))}
             </select>
 
-            <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
               Month
             </div>
             <select
-              className="input"
+              className="sales2-input"
               value={filterMonth}
               onChange={(e) => setFilterMonth(e.target.value)}
-              style={{ minWidth: 170, height: 38 }}
+              style={{ minWidth: 170 }}
             >
               <option value="all">All</option>
               {monthOptions.map((m) => (
@@ -478,10 +716,10 @@ export default function Sales() {
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
             <thead>
               <tr>
-                {["Date", "Item", "Units", "Profit", "Note", "Actions"].map((h) => (
+                {["Date", "Client", "Item", "Units", "Profit", "Note", "Actions"].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -491,6 +729,7 @@ export default function Sales() {
                       color: "rgba(255,255,255,0.75)",
                       fontSize: 12,
                       letterSpacing: 0.3,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {h}
@@ -500,30 +739,48 @@ export default function Sales() {
             </thead>
 
             <tbody>
-              {filteredRows.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{r.date ?? ""}</td>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    <b>{r.item ?? ""}</b>
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{Number(r.units_sold ?? 0)}</td>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    ${Number(r.profit ?? 0).toFixed(2)}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    <span className="muted">{r.note ?? ""}</span>
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    <button className="btn" onClick={() => deleteSale(r.id)}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filteredRows.map((r) => {
+                const c = r.client_id ? clientMap.get(r.client_id) : null;
+                const cname = c?.name?.trim() ? c.name : r.client_id ? `Client #${r.client_id}` : "";
+                const csub = c ? [c.email, c.phone].filter(Boolean).join(" • ") : "";
+
+                return (
+                  <tr key={r.id}>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{r.date ?? ""}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      {cname ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                          <b style={{ color: "rgba(255,255,255,0.92)" }}>{cname}</b>
+                          <span className="muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {csub || "—"}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      <b>{r.item ?? ""}</b>
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{Number(r.units_sold ?? 0)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      ${Number(r.profit ?? 0).toFixed(2)}
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      <span className="muted">{r.note ?? ""}</span>
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                      <button className="btn" onClick={() => void deleteSale(r.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
 
               {!filteredRows.length ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: 14 }} className="muted">
+                  <td colSpan={7} style={{ padding: 14 }} className="muted">
                     No sales yet.
                   </td>
                 </tr>
@@ -531,15 +788,159 @@ export default function Sales() {
             </tbody>
           </table>
         </div>
-
-        <style>{`
-          @media (max-width: 760px) {
-            .page .card select.input {
-              min-width: 140px !important;
-            }
-          }
-        `}</style>
       </div>
+
+      {/* Client Picker */}
+      {clientPickerOpen ? (
+        <div className="sales2-overlay" onClick={() => setClientPickerOpen(false)}>
+          <div className="sales2-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ alignItems: "center" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <h2 style={{ margin: 0 }}>Select Client</h2>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Search by name, email, or phone.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btn" type="button" onClick={() => chooseClient(null)}>
+                  Clear
+                </button>
+                <button className="btn" type="button" onClick={() => setClientPickerOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <input
+                className="sales2-input"
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                placeholder="Search clients..."
+                style={{ width: "100%" }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10, maxHeight: 420, overflow: "auto", paddingRight: 2 }}>
+              {filteredClients.map((c) => {
+                const title = c?.name?.trim() ? c.name : `Client #${c.id}`;
+                const sub = [c.email, c.phone].filter(Boolean).join(" • ") || "No contact details";
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="btn"
+                    onClick={() => chooseClient(c.id)}
+                    style={{
+                      textAlign: "left",
+                      padding: 12,
+                      borderRadius: 16,
+                      border: "1px solid rgba(120,160,255,0.16)",
+                      background:
+                        "radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%), rgba(0,0,0,0.38)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)" }}>{title}</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                      {sub}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {!filteredClients.length ? (
+                <div className="muted" style={{ padding: 10 }}>
+                  No matches. You can create a new client.
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn primary" type="button" onClick={openQuickAddClient}>
+                + New Client
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Quick Add Client */}
+      {clientAddOpen ? (
+        <div className="sales2-overlay" onClick={() => setClientAddOpen(false)}>
+          <div className="sales2-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ alignItems: "center" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <h2 style={{ margin: 0 }}>New Client</h2>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Nothing is required — save whatever you have.
+                </div>
+              </div>
+              <button className="btn" type="button" onClick={() => setClientAddOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="sales2-modalGrid">
+              <div>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                  Name
+                </div>
+                <input className="sales2-input" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} style={{ width: "100%" }} />
+              </div>
+
+              <div>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                  Phone
+                </div>
+                <input className="sales2-input" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} style={{ width: "100%" }} />
+              </div>
+
+              <div>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                  Email
+                </div>
+                <input className="sales2-input" value={newClientEmail} onChange={(e) => setNewClientEmail(e.target.value)} style={{ width: "100%" }} />
+              </div>
+
+              <div>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                  Last spoken (optional)
+                </div>
+                <input
+                  className="sales2-input"
+                  type="date"
+                  value={newClientLastSpoken}
+                  onChange={(e) => setNewClientLastSpoken(e.target.value)}
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                  Notes (optional)
+                </div>
+                <input
+                  className="sales2-input"
+                  value={newClientNotes}
+                  onChange={(e) => setNewClientNotes(e.target.value)}
+                  style={{ width: "100%" }}
+                  placeholder="Anything you want to remember about them..."
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn primary" type="button" onClick={() => void createClientQuick()}>
+                Save Client
+              </button>
+              <button className="btn" type="button" onClick={() => setClientAddOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-type NotesMap = Record<string, string>; // key: YYYY-MM-DD -> note text
+type CalNoteRow = {
+  id?: number;
+  note_date: string; // YYYY-MM-DD (DATE in DB)
+  bullets: string[] | null; // text[] in DB (recommended) OR we handle fallback
+  details?: string | null; // optional text column
+  updated_at?: string | null;
+};
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -11,343 +17,368 @@ function isoDate(y: number, mIndex: number, d: number) {
   return `${y}-${pad2(mIndex + 1)}-${pad2(d)}`;
 }
 
-function loadNotesLocal(): NotesMap {
-  try {
-    const raw = localStorage.getItem("calendarNotes");
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function todayISO() {
+  const d = new Date();
+  return isoDate(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function saveNotesLocal(notes: NotesMap) {
-  localStorage.setItem("calendarNotes", JSON.stringify(notes));
-  window.dispatchEvent(new Event("ad-storage-updated"));
+function monthName(mi: number) {
+  return new Date(2000, mi, 1).toLocaleString(undefined, { month: "long" });
 }
 
-const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
+function cleanBullets(lines: string[]) {
+  return lines
+    .map((x) => String(x ?? "").trim())
+    .filter((x) => x.length > 0)
+    .slice(0, 25);
+}
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-export default function SalesCalendar() {
-  const today = new Date();
-
-  const [notes, setNotes] = useState<NotesMap>({});
-  const [year, setYear] = useState<number>(today.getFullYear());
-  const [monthIndex, setMonthIndex] = useState<number>(today.getMonth()); // 0-11
+export default function CalendarPage() {
+  const now = new Date();
+  const [month, setMonth] = useState<number>(now.getMonth()); // 0-11
+  const [year, setYear] = useState<number>(now.getFullYear());
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // editor modal/state
-  const [selectedDate, setSelectedDate] = useState<string>(""); // YYYY-MM-DD
-  const [editorValue, setEditorValue] = useState<string>("");
+  // loaded notes for visible month
+  const [notes, setNotes] = useState<Record<string, CalNoteRow>>({});
 
-  // Build calendar grid (we use this to know the visible date range)
-  const grid = useMemo(() => {
-    const firstDay = new Date(year, monthIndex, 1);
-    const startWeekday = firstDay.getDay();
-    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-    const prevMonthDays = new Date(year, monthIndex, 0).getDate();
+  // modal
+  const [open, setOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [draftBullets, setDraftBullets] = useState<string>(""); // textarea bullets
+  const [draftDetails, setDraftDetails] = useState<string>("");
 
-    const cells: Array<{
-      y: number;
-      m: number;
-      d: number;
-      inMonth: boolean;
-      key: string;
-      isToday: boolean;
-      note: string;
-    }> = [];
+  const monthStart = useMemo(() => {
+    const d = new Date(year, month, 1);
+    return isoDate(d.getFullYear(), d.getMonth(), d.getDate());
+  }, [year, month]);
 
-    for (let i = 0; i < 42; i++) {
-      const dayNum = i - startWeekday + 1;
+  const monthEndExclusive = useMemo(() => {
+    const d = new Date(year, month + 1, 1);
+    return isoDate(d.getFullYear(), d.getMonth(), d.getDate());
+  }, [year, month]);
 
-      let y = year;
-      let m = monthIndex;
-      let d = dayNum;
-      let inMonth = true;
-
-      if (dayNum < 1) {
-        inMonth = false;
-        const prev = new Date(year, monthIndex - 1, 1);
-        y = prev.getFullYear();
-        m = prev.getMonth();
-        d = prevMonthDays + dayNum;
-      } else if (dayNum > daysInMonth) {
-        inMonth = false;
-        const nxt = new Date(year, monthIndex + 1, 1);
-        y = nxt.getFullYear();
-        m = nxt.getMonth();
-        d = dayNum - daysInMonth;
-      }
-
-      const key = isoDate(y, m, d);
-      const isToday =
-        y === today.getFullYear() &&
-        m === today.getMonth() &&
-        d === today.getDate();
-
-      cells.push({
-        y,
-        m,
-        d,
-        inMonth,
-        key,
-        isToday,
-        note: notes[key] ?? "",
-      });
-    }
-
-    return cells;
-  }, [year, monthIndex, notes]);
-
-  const visibleRange = useMemo(() => {
-    const first = grid[0]?.key;
-    const last = grid[grid.length - 1]?.key;
-    return { first, last };
-  }, [grid]);
-
-  async function loadNotesFromDB(first: string, last: string) {
+  async function loadMonth() {
     setLoading(true);
     setErr("");
     try {
-      // load a local cache first (instant UI)
-      const cached = loadNotesLocal();
-      setNotes(cached);
-
-      const { data, error } = await supabase
+      const res = await supabase
         .from("calendar_notes")
-        .select("day,note")
-        .gte("day", first)
-        .lte("day", last);
+        .select("id,note_date,bullets,details,updated_at")
+        .gte("note_date", monthStart)
+        .lt("note_date", monthEndExclusive)
+        .order("note_date", { ascending: true });
 
-      if (error) throw error;
+      if (res.error) throw res.error;
 
-      const next: NotesMap = { ...cached };
-      for (const row of data ?? []) {
-        const k = String((row as any).day);
-        next[k] = String((row as any).note ?? "");
+      const map: Record<string, CalNoteRow> = {};
+      for (const r of (res.data as any[]) ?? []) {
+        const key = String(r.note_date);
+        // bullets could come back null or as array
+        const b = Array.isArray(r.bullets) ? (r.bullets as string[]) : null;
+        map[key] = { ...r, note_date: key, bullets: b };
       }
-
-      setNotes(next);
-      saveNotesLocal(next);
+      setNotes(map);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
-      // still keep local cache if DB fails
-      setNotes(loadNotesLocal());
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    // initial load (and whenever month changes)
-    if (visibleRange.first && visibleRange.last) {
-      void loadNotesFromDB(visibleRange.first, visibleRange.last);
-    }
+    void loadMonth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, monthIndex, visibleRange.first, visibleRange.last]);
+  }, [month, year]);
 
-  function goPrevMonth() {
-    const d = new Date(year, monthIndex - 1, 1);
-    setYear(d.getFullYear());
-    setMonthIndex(d.getMonth());
-  }
+  // calendar grid math
+  const grid = useMemo(() => {
+    const first = new Date(year, month, 1);
+    const firstDow = first.getDay(); // 0 Sun
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  function goNextMonth() {
-    const d = new Date(year, monthIndex + 1, 1);
-    setYear(d.getFullYear());
-    setMonthIndex(d.getMonth());
-  }
+    // We’ll render 6 weeks (42 cells) for consistent layout
+    const cells: { iso: string; day: number; inMonth: boolean }[] = [];
+    let dayNum = 1 - firstDow;
 
-  function openDay(dateKey: string) {
-    setSelectedDate(dateKey);
-    setEditorValue(notes[dateKey] ?? "");
-  }
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(year, month, dayNum);
+      const inMonth = d.getMonth() === month;
+      cells.push({ iso: isoDate(d.getFullYear(), d.getMonth(), d.getDate()), day: d.getDate(), inMonth });
+      dayNum++;
+    }
+    return cells;
+  }, [year, month]);
 
-  function closeEditor() {
-    setSelectedDate("");
-    setEditorValue("");
-  }
-
-  async function saveEditor() {
-    if (!selectedDate) return;
-
-    const trimmed = editorValue.trim();
-    const next = { ...notes };
-
+  function openDay(iso: string) {
     setErr("");
+    setSelectedDate(iso);
+
+    const existing = notes[iso];
+    const bullets = existing?.bullets ?? [];
+    setDraftBullets((bullets ?? []).join("\n"));
+    setDraftDetails(String(existing?.details ?? ""));
+    setOpen(true);
+  }
+
+  function closeModal() {
+    setOpen(false);
+  }
+
+  async function saveNote() {
+    if (!selectedDate) {
+      setErr("No date selected.");
+      return;
+    }
+
+    setLoading(true);
+    setErr("");
+
+    const bullets = cleanBullets(draftBullets.split("\n"));
+    const details = String(draftDetails ?? "").trim();
+
+    // ✅ IMPORTANT: never allow null note_date
+    const payload: CalNoteRow = {
+      note_date: selectedDate,
+      bullets: bullets.length ? bullets : [],
+      details: details.length ? details : null,
+    };
 
     try {
-      if (!trimmed) {
-        // delete note
-        delete next[selectedDate];
-        setNotes(next);
-        saveNotesLocal(next);
+      // Use upsert so same date is updated (requires UNIQUE constraint on note_date recommended)
+      const res = await supabase.from("calendar_notes").upsert(payload as any, { onConflict: "note_date" }).select();
 
-        const { error } = await supabase.from("calendar_notes").delete().eq("day", selectedDate);
-        if (error) throw error;
+      if (res.error) throw res.error;
 
-        closeEditor();
-        return;
-      }
+      // update local map
+      setNotes((prev) => ({
+        ...prev,
+        [selectedDate]: {
+          ...(prev[selectedDate] ?? {}),
+          note_date: selectedDate,
+          bullets: payload.bullets ?? [],
+          details: payload.details ?? null,
+        },
+      }));
 
-      // upsert note
-      next[selectedDate] = trimmed;
-      setNotes(next);
-      saveNotesLocal(next);
-
-      const { error } = await supabase
-        .from("calendar_notes")
-        .upsert([{ day: selectedDate, note: trimmed }], { onConflict: "day" });
-
-      if (error) throw error;
-
-      closeEditor();
+      setOpen(false);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function clearNote() {
+  async function deleteNote() {
     if (!selectedDate) return;
 
+    const ok = confirm("Delete this event note?");
+    if (!ok) return;
+
+    setLoading(true);
     setErr("");
-    const next = { ...notes };
-    delete next[selectedDate];
-    setNotes(next);
-    saveNotesLocal(next);
+    try {
+      const res = await supabase.from("calendar_notes").delete().eq("note_date", selectedDate);
+      if (res.error) throw res.error;
 
-    const { error } = await supabase.from("calendar_notes").delete().eq("day", selectedDate);
-    if (error) setErr(error.message);
+      setNotes((prev) => {
+        const next = { ...prev };
+        delete next[selectedDate];
+        return next;
+      });
 
-    closeEditor();
+      setOpen(false);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const yearOptions = useMemo(() => {
-    const base = today.getFullYear();
-    const arr: number[] = [];
-    for (let y = base - 5; y <= base + 5; y++) arr.push(y);
-    return arr;
-  }, [today]);
+  const monthLabel = `${monthName(month)} ${year}`;
 
   return (
-    <div className="page">
+    <div className="page cal-page">
       <style>{`
-        .calHeaderRow {
-          display: flex;
-          align-items: center;
+        .cal-top{
+          display:flex;
+          align-items: baseline;
           justify-content: space-between;
           gap: 12px;
           flex-wrap: wrap;
         }
-
-        .calControls {
-          display: flex;
+        .cal-right{
+          display:flex;
           gap: 10px;
           flex-wrap: wrap;
-          align-items: center;
-          justify-content: flex-end;
+          align-items:center;
+          justify-content:flex-end;
+        }
+        .cal-select{
+          min-width: 220px;
+          height: 40px;
         }
 
-        .weekdaySticky {
-          position: sticky;
-          top: 70px;
-          z-index: 10;
-          background: rgba(10,10,10,0.85);
-          backdrop-filter: blur(10px);
+        .cal-card{
+          margin-top: 12px;
+          padding: 12px;
+        }
+
+        .cal-grid{
+          display:grid;
+          grid-template-columns: repeat(7, 1fr);
+          gap: 10px;
+          margin-top: 10px;
+        }
+
+        .cal-dow{
+          text-align:center;
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(255,255,255,0.70);
+          padding: 6px 0;
+        }
+
+        .day{
+          position: relative;
+          border-radius: 16px;
           border: 1px solid rgba(255,255,255,0.10);
-          border-radius: 12px;
-          padding: 8px;
-        }
-
-        .weekdayGrid {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 8px;
-        }
-
-        .daysGrid {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 8px;
-        }
-
-        .dayCell {
-          text-align: left;
+          background: rgba(10,10,16,0.45);
+          min-height: 72px;
           padding: 10px;
-          min-height: 90px;
           cursor: pointer;
-          border-radius: 12px;
-          border: 1px solid rgba(255,255,255,0.08);
-          background: rgba(0,0,0,0.0);
-          color: #fff;
+          transition: transform .12s ease, border-color .12s ease, background .12s ease, box-shadow .12s ease;
+          overflow: hidden;
+        }
+        .day:hover{
+          transform: translateY(-1px);
+          border-color: rgba(152,90,255,0.28);
+          box-shadow: 0 16px 34px rgba(0,0,0,0.30);
         }
 
-        @media (max-width: 700px) {
-          .calHeaderRow { flex-direction: column; align-items: flex-start; }
-          .calControls { width: 100%; justify-content: space-between; }
-          .calControls .input { width: 100% !important; }
-          .weekdaySticky { top: 92px; padding: 10px; }
-          .dayCell { min-height: 104px; padding: 12px; }
-          .dayNum { font-size: 18px !important; }
-          .notePreview { font-size: 13px !important; }
-          button.btn { min-height: 44px; padding: 10px 12px; }
-          select.input, textarea.input, input.input { min-height: 44px; font-size: 16px; }
+        .day.out{
+          opacity: 0.45;
         }
 
-        @media (max-width: 420px) {
-          .weekdayGrid, .daysGrid { gap: 6px; }
-          .dayCell { min-height: 96px; padding: 10px; }
+        .daynum{
+          font-weight: 950;
+          font-size: 14px;
+          color: rgba(255,255,255,0.92);
+        }
+
+        /* ✅ event indicator: dot + subtle highlight */
+        .day.hasEvent{
+          border-color: rgba(152,90,255,0.26);
+          background: linear-gradient(180deg, rgba(152,90,255,0.10), rgba(10,10,16,0.45));
+        }
+        .dot{
+          position:absolute;
+          top: 10px;
+          right: 10px;
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.85);
+          box-shadow: 0 0 14px rgba(152,90,255,0.35);
+          opacity: 0.9;
+        }
+
+        .todayRing{
+          position:absolute;
+          inset: 6px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.10);
+          box-shadow: 0 0 0 3px rgba(152,90,255,0.10);
+          pointer-events:none;
+        }
+
+        /* Modal */
+        .overlay{
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.72);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding: 14px;
+          z-index: 80;
+        }
+        .modal{
+          width: min(780px, 100%);
+          padding: 14px;
+          border-radius: 18px;
+        }
+        .modalGrid{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-top: 12px;
+        }
+        .label{
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(255,255,255,0.70);
+          margin-bottom: 6px;
+        }
+
+        textarea.input{
+          min-height: 130px;
+        }
+
+        .hint{
+          font-size: 12px;
+          color: rgba(255,255,255,0.60);
+          margin-top: 8px;
+        }
+
+        @media (max-width: 820px){
+          .cal-select{ min-width: 160px; }
+          .cal-grid{ gap: 8px; }
+          .day{ min-height: 66px; padding: 9px; }
+          .modalGrid{ grid-template-columns: 1fr; }
+          input.input, select.input, textarea.input{ font-size: 16px; } /* iOS zoom fix */
         }
       `}</style>
 
-      <div className="calHeaderRow">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0 }}>Sales Calendar</h1>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {loading ? "Loading…" : "Saved to cloud"}
-          </span>
+      <div className="row cal-top">
+        <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>Event Calendar</h1>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Tap a day to add bullets (mobile-safe).
+          </div>
         </div>
 
-        <div className="calControls">
-          <button className="btn" onClick={goPrevMonth}>◀</button>
-
-          <select
-            className="input"
-            style={{ width: 170 }}
-            value={monthIndex}
-            onChange={(e) => setMonthIndex(Number(e.target.value))}
-          >
-            {MONTHS.map((name, idx) => (
-              <option key={name} value={idx}>{name}</option>
+        <div className="cal-right">
+          <select className="input cal-select" value={String(month)} onChange={(e) => setMonth(Number(e.target.value))}>
+            {Array.from({ length: 12 }).map((_, i) => (
+              <option key={i} value={String(i)}>
+                {monthName(i)}
+              </option>
             ))}
           </select>
 
-          <select
-            className="input"
-            style={{ width: 120 }}
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
+          <select className="input cal-select" value={String(year)} onChange={(e) => setYear(Number(e.target.value))}>
+            {Array.from({ length: 7 }).map((_, i) => {
+              const y = now.getFullYear() - 3 + i;
+              return (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              );
+            })}
           </select>
 
-          <button className="btn" onClick={goNextMonth}>▶</button>
+          <button className="btn" type="button" onClick={() => void loadMonth()} disabled={loading} title="Refresh">
+            {loading ? "Loading…" : "Refresh"}
+          </button>
         </div>
       </div>
 
-      <p className="muted" style={{ marginTop: 8 }}>
-        Tap any day to add a note. Notes save to your Supabase database.
-      </p>
+      <div className="muted" style={{ marginTop: 6 }}>
+        Viewing: <b>{monthLabel}</b>
+      </div>
 
       {err ? (
         <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)", marginTop: 12 }}>
@@ -355,112 +386,87 @@ export default function SalesCalendar() {
         </div>
       ) : null}
 
-      <div className="card" style={{ padding: 12 }}>
-        <div className="weekdaySticky" style={{ marginBottom: 10 }}>
-          <div className="weekdayGrid">
-            {WEEKDAYS.map((w) => (
-              <div key={w} className="muted" style={{ fontWeight: 800, textAlign: "center" }}>
-                {w}
-              </div>
-            ))}
-          </div>
+      <div className="card cal-card">
+        <div className="cal-grid" style={{ marginTop: 0 }}>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div key={d} className="cal-dow">
+              {d}
+            </div>
+          ))}
         </div>
 
-        <div className="daysGrid">
-          {grid.map((cell) => {
-            const hasNote = !!cell.note?.trim();
-
+        <div className="cal-grid">
+          {grid.map((c) => {
+            const has = (notes[c.iso]?.bullets?.length ?? 0) > 0 || (notes[c.iso]?.details?.trim?.()?.length ?? 0) > 0;
+            const isToday = c.iso === todayISO();
             return (
-              <button
-                key={cell.key}
-                className="dayCell"
-                onClick={() => openDay(cell.key)}
-                style={{
-                  opacity: cell.inMonth ? 1 : 0.45,
-                  border: cell.isToday
-                    ? "1px solid rgba(255,255,255,0.45)"
-                    : "1px solid rgba(255,255,255,0.08)",
-                  background: hasNote ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.0)",
-                }}
+              <div
+                key={c.iso}
+                className={`day ${c.inMonth ? "" : "out"} ${has ? "hasEvent" : ""}`}
+                onClick={() => openDay(c.iso)}
+                title={has ? "Has event" : "Add event"}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                  <div className="dayNum" style={{ fontWeight: 900, color: "#ffffff", fontSize: 16 }}>
-                    {cell.d}
-                  </div>
-
-                  {hasNote ? (
-                    <span className="pill" style={{ fontSize: 12 }}>
-                      NOTE
-                    </span>
-                  ) : null}
-                </div>
-
-                <div
-                  className="muted notePreview"
-                  style={{
-                    marginTop: 8,
-                    fontSize: 12,
-                    lineHeight: 1.25,
-                    overflow: "hidden",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 3,
-                    WebkitBoxOrient: "vertical",
-                  }}
-                >
-                  {hasNote ? cell.note : " "}
-                </div>
-              </button>
+                <div className="daynum">{c.day}</div>
+                {has ? <div className="dot" /> : null}
+                {isToday ? <div className="todayRing" /> : null}
+              </div>
             );
           })}
         </div>
       </div>
 
-      {selectedDate && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 14,
-            zIndex: 50,
-          }}
-          onClick={closeEditor}
-        >
-          <div className="card" style={{ width: "min(720px, 100%)", padding: 14 }} onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ alignItems: "center" }}>
-              <h2 style={{ margin: 0 }}>Note for {selectedDate}</h2>
-              <button className="btn" onClick={closeEditor}>Close</button>
+      {open && selectedDate ? (
+        <div className="overlay" onClick={closeModal}>
+          <div className="card modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Event — {selectedDate}</h2>
+                <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+                  Bullets show as a dot on the calendar. Keeps mobile clean.
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button className="btn" type="button" onClick={closeModal}>
+                  Close
+                </button>
+              </div>
             </div>
 
-            <label className="label" style={{ marginTop: 10 }}>
-              Your note
-            </label>
-            <textarea
-              className="input"
-              style={{ height: 160, resize: "vertical" }}
-              value={editorValue}
-              onChange={(e) => setEditorValue(e.target.value)}
-              placeholder="Example: Customer wants SM7B. Meet at 6pm. Bring cash app info."
-            />
+            <div className="modalGrid">
+              <div>
+                <div className="label">Bullets (one per line)</div>
+                <textarea
+                  className="input"
+                  value={draftBullets}
+                  onChange={(e) => setDraftBullets(e.target.value)}
+                  placeholder={`Example:\n• Meet Chad @ 3pm\n• Bring WA-87\n• Follow up on pricing`}
+                />
+                <div className="hint">Tip: keep each bullet short — the calendar stays clean.</div>
+              </div>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-              <button className="btn primary" onClick={() => void saveEditor()}>
-                Save Note
-              </button>
-              <button className="btn" onClick={() => void clearNote()}>
-                Delete Note
-              </button>
+              <div>
+                <div className="label">Details (optional)</div>
+                <textarea
+                  className="input"
+                  value={draftDetails}
+                  onChange={(e) => setDraftDetails(e.target.value)}
+                  placeholder="Extra context, address, links, etc."
+                />
+              </div>
             </div>
 
-            <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-              Tip: leaving it blank and saving will remove the note.
-            </p>
+            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button className="btn primary" type="button" onClick={() => void saveNote()} disabled={loading}>
+                {loading ? "Saving…" : "Save Event"}
+              </button>
+              <button className="btn" type="button" onClick={() => void deleteNote()} disabled={loading}>
+                Delete
+              </button>
+            </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
