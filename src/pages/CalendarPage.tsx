@@ -97,8 +97,7 @@ export default function CalendarPage() {
   const grid = useMemo(() => {
     const first = new Date(year, month, 1);
     const firstDow = first.getDay(); // 0 Sun
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-
+    
     // We’ll render 6 weeks (42 cells) for consistent layout
     const cells: { iso: string; day: number; inMonth: boolean }[] = [];
     let dayNum = 1 - firstDow;
@@ -270,17 +269,18 @@ export default function CalendarPage() {
 
         /* ✅ event indicator: dot + subtle highlight */
         .day.hasEvent{
-          border-color: rgba(152,90,255,0.26);
-          background: linear-gradient(180deg, rgba(152,90,255,0.10), rgba(10,10,16,0.45));
-        }
-        .dot{
-          position:absolute;
-          top: 10px;
-          right: 10px;
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: rgba(255,255,255,0.85);
+  border-color: rgba(255,255,255,0.22);
+  background:
+    radial-gradient(420px 180px at 30% 10%, rgba(255,255,255,0.10), transparent 60%),
+    radial-gradient(520px 220px at 70% 30%, rgba(152,90,255,0.22), transparent 62%),
+    linear-gradient(180deg, rgba(152,90,255,0.16), rgba(10,10,16,0.45));
+  box-shadow: 0 0 0 2px rgba(152,90,255,0.12), 0 16px 40px rgba(0,0,0,0.35);
+}
+.dot{
+  background: rgba(255,255,255,0.98);
+  box-shadow: 0 0 18px rgba(152,90,255,0.75);
+}
+
           box-shadow: 0 0 14px rgba(152,90,255,0.35);
           opacity: 0.9;
         }
