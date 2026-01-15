@@ -9,7 +9,7 @@ const links = [
   { to: "/tracking", label: "Tracking" },
   { to: "/calendar", label: "Event Calendar" },
   { to: "/clients", label: "Clients" },
-  { to: "/new-product", label: "Product List" },
+  { to: "/new-product", label: "Future Products" },
 ];
 
 export default function Layout() {

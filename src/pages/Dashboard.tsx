@@ -26,12 +26,6 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-/**
- * If your Sales page is already working, Dashboard should point to the SAME table.
- * This loader tries: Sales, sales, "Sales" (quoted) to avoid schema cache/name mismatch issues.
- */
-const SALES_TABLE_CANDIDATES = ["Sales", "sales", '"Sales"'] as const;
-
 function money(n: number) {
   const v = Number.isFinite(n) ? n : 0;
   return `$${v.toFixed(2)}`;
@@ -44,8 +38,14 @@ type NextEvent = {
   details: string | null;
 };
 
+// ✅ Minimal shape we need for charting
+type ProfitRow = {
+  dateISO: string;   // YYYY-MM-DD
+  profit: number;    // computed from sale_lines + inventory.cost
+};
+
 export default function Dashboard() {
-  const [sales, setSales] = useState<any[]>([]);
+  const [sales, setSales] = useState<ProfitRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [range, setRange] = useState<RangeKey>("6");
@@ -57,34 +57,95 @@ export default function Dashboard() {
 
   const now = new Date();
 
-  async function tryLoadAnyTable() {
-    let lastError = "";
-
-    for (const t of SALES_TABLE_CANDIDATES) {
-      const res = await supabase.from(t as any).select("*").limit(1000);
-      if (!res.error) {
-        return { table: t, data: res.data ?? [], error: "" };
-      }
-      lastError = res.error.message;
-    }
-
-    return { table: "", data: [], error: lastError || "Unable to load Sales table." };
-  }
-
+  // ✅ THIS is the key fix: compute profit the SAME way Sales.tsx does
   async function loadSales() {
     setLoading(true);
     setErr("");
 
-    const res = await tryLoadAnyTable();
-    if (res.error) {
-      setErr(res.error);
-      setSales([]);
-      setLoading(false);
-      return;
-    }
+    try {
+      // 1) Load sales headers
+      const salesRes = await supabase
+        .from("sales")
+        .select("id,sale_date,created_at")
+        .order("sale_date", { ascending: false })
+        .limit(2000);
 
-    setSales(res.data);
-    setLoading(false);
+      if (salesRes.error) throw salesRes.error;
+
+      const salesRows = (salesRes.data as any[]) ?? [];
+      const saleIds = salesRows.map((s) => s.id).filter(Boolean);
+
+      if (!saleIds.length) {
+        setSales([]);
+        setLoading(false);
+        return;
+      }
+
+      // 2) Load sale lines
+      const linesRes = await supabase
+        .from("sale_lines")
+        .select("sale_id,item_id,units,price,fees")
+        .in("sale_id", saleIds);
+
+      if (linesRes.error) throw linesRes.error;
+
+      const linesRows = (linesRes.data as any[]) ?? [];
+
+      // 3) Build inventory cost map for item_ids in lines
+      const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean)));
+
+      const costMap = new Map<number, number>();
+      if (itemIds.length) {
+        const invRes = await supabase
+          .from("inventory")
+          .select("id,cost")
+          .in("id", itemIds);
+
+        if (invRes.error) throw invRes.error;
+
+        for (const r of (invRes.data as any[]) ?? []) {
+          costMap.set(Number(r.id), Number(r.cost ?? 0));
+        }
+      }
+
+      // 4) Group lines by sale_id
+      const linesBySale = new Map<number, any[]>();
+      for (const l of linesRows) {
+        const sid = Number(l.sale_id);
+        if (!linesBySale.has(sid)) linesBySale.set(sid, []);
+        linesBySale.get(sid)!.push(l);
+      }
+
+      // 5) Compute profit per sale, return {dateISO, profit}
+      const computed: ProfitRow[] = salesRows.map((s) => {
+        const sid = Number(s.id);
+        const saleLines = linesBySale.get(sid) ?? [];
+
+        const profit = saleLines.reduce((sum, l) => {
+          const cost = costMap.get(Number(l.item_id)) ?? 0;
+          const u = Number(l.units ?? 0);
+          const price = Number(l.price ?? 0);
+          const fees = Number(l.fees ?? 0);
+          return sum + (price - fees - cost * u);
+        }, 0);
+
+        const dateISO =
+          (String(s.sale_date ?? "").slice(0, 10) || "") ||
+          (String(s.created_at ?? "").slice(0, 10) || "");
+
+        return {
+          dateISO: dateISO || "1970-01-01",
+          profit,
+        };
+      });
+
+      setSales(computed);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+      setSales([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadNextEvent() {
@@ -136,25 +197,16 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Date/profit detection (safe)
-  function getDate(s: any): Date | null {
-    const raw =
-      s?.sold_at ??
-      s?.date ??
-      s?.created_at ??
-      s?.create_at ??
-      s?.createdAt ??
-      s?.timestamp ??
-      null;
-
+  // ✅ Date helper uses our computed dateISO
+  function getDate(s: ProfitRow): Date | null {
+    const raw = s?.dateISO ?? null;
     if (!raw) return null;
     const d = new Date(raw);
     return Number.isFinite(d.getTime()) ? d : null;
   }
 
-  function getProfit(s: any): number {
-    const p = s?.profit ?? s?.total_profit ?? s?.amount ?? s?.net ?? s?.total ?? 0;
-    const n = Number(p);
+  function getProfit(s: ProfitRow): number {
+    const n = Number(s?.profit ?? 0);
     return Number.isFinite(n) ? n : 0;
   }
 
@@ -198,7 +250,7 @@ export default function Dashboard() {
     <div className="page dash-page">
       <div className="row dash-top">
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <h1 style={{ margin: 0 }}>☁️ Welcome To The Dream ☁️</h1>
+          <h1 style={{ margin: 0 }}>☁️ Into The Dream ☁️</h1>
           <span className="dash-sigil">⟡</span>
         </div>
 

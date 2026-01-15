@@ -1,24 +1,6 @@
+// src/pages/SalesMetrics.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
-
-/**
- * This page is MOBILE-FIRST.
- * It:
- * - loads sellers (sales_people OR sale_sellers OR sellers)
- * - loads sales rows from "sales"
- * - tries to also load sale line-items if a table exists
- * - calculates:
- *    total profit, total sales, fees, avg selling price per sale,
- *    avg items per sale (best-effort via sale_lines; fallback=1 per sale)
- * - filters by Seller + Month + Year
- * - allows adding a salesperson (bottom sheet)
- *
- * Requested changes:
- * - DO NOT change layout/behavior
- * - ONLY: show nicknames in dropdown for Chad/Devan (display labels)
- * - Add cool effects (visual only) + gothic/vampiric "Sales Metrics" title
- * - Do not change anything that affects table performance
- */
 
 type SellerRow = {
   id: number;
@@ -30,24 +12,23 @@ type SellerRow = {
 type SaleRow = {
   id: number;
   sale_date: string | null; // YYYY-MM-DD
-  seller_name: string | null;
   seller_id: number | null;
-
-  sale_price: number | null;
-  cost: number | null;
-  fees: number | null;
-  profit: number | null;
-
   notes: string | null;
   created_at?: string | null;
+  seller_name?: string | null; // derived
 };
 
 type SaleLineRow = {
-  id: number;
   sale_id: number;
-  qty: number | null;
+  item_id: number;
+  units: number | null;
   price: number | null;
   fees: number | null;
+};
+
+type InvRow = {
+  id: number;
+  cost: number | null;
 };
 
 function toNum(v: any, fallback = 0) {
@@ -71,6 +52,7 @@ function ymFromISO(iso: string | null) {
 }
 
 function monthName(m: string) {
+  if (m === "ALL") return "All time";
   const map: Record<string, string> = {
     "01": "Jan",
     "02": "Feb",
@@ -92,56 +74,54 @@ function norm(s: string) {
   return s.trim().toLowerCase();
 }
 
+// ✅ DISPLAY NAMES (visual-only): Chad -> Chadillac, Devan -> Devan the Dude
 function nicknameFor(name: string) {
   const n = norm(name);
   if (n === "chad") return "Chadillac";
-  if (n === "devan") return "the Dude";
+  if (n === "devan") return "Devan the Dude";
   return "";
 }
-
 function displaySellerName(name: string) {
   const nick = nicknameFor(name);
   return nick || name;
+}
+
+// ✅ for styling recent rows (visual-only)
+function sellerTone(name: string | null | undefined) {
+  const n = norm(String(name ?? ""));
+  if (n === "chad") return "chad";
+  if (n === "devan") return "devan";
+  return "other";
 }
 
 export default function SalesMetrics() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const [sellerTable, setSellerTable] = useState<string>("sales_people");
-  const [salesTable] = useState<string>("sales");
-  const [linesTable, setLinesTable] = useState<string | null>(null);
-
+  // filters
   const now = new Date();
   const [year, setYear] = useState(String(now.getFullYear()));
   const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
-  const [seller, setSeller] = useState<string>("ALL");
+  const [seller, setSeller] = useState<string>("ALL"); // stores REAL name
 
+  // data
+  const [sellerTable, setSellerTable] = useState<string>("sales_people");
   const [sellers, setSellers] = useState<SellerRow[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [saleLines, setSaleLines] = useState<SaleLineRow[]>([]);
+  const [inv, setInv] = useState<InvRow[]>([]);
 
+  // add salesperson sheet (kept)
   const [addOpen, setAddOpen] = useState(false);
   const [newSellerName, setNewSellerName] = useState("");
 
-  async function detectTables() {
-    const sellerCandidates = ["sales_people", "sale_sellers", "sellers"];
-    for (const t of sellerCandidates) {
+  async function detectSellerTable(): Promise<string> {
+    const candidates = ["sales_people", "sale_sellers", "sellers"];
+    for (const t of candidates) {
       const res = await supabase.from(t).select("id").limit(1);
-      if (!res.error) {
-        setSellerTable(t);
-        break;
-      }
+      if (!res.error) return t;
     }
-
-    const lineCandidates: string[] = [];
-    for (const t of lineCandidates) {
-      const res = await supabase.from(t).select("id").limit(1);
-      if (!res.error) {
-        setLinesTable(t);
-        break;
-      }
-    }
+    return "sales_people";
   }
 
   async function loadAll() {
@@ -149,40 +129,65 @@ export default function SalesMetrics() {
     setErr("");
 
     try {
-      await detectTables();
+      const st = await detectSellerTable();
+      setSellerTable(st);
 
-      const sRes = await supabase.from(sellerTable).select("id,name,active,created_at").order("name", { ascending: true });
-      if (!sRes.error) setSellers(((sRes.data as any) ?? []) as SellerRow[]);
-      else setSellers([]);
+      // 1) sellers
+      const sRes = await supabase.from(st).select("id,name,active,created_at").order("name", { ascending: true });
+      const sellerRows = !sRes.error ? (((sRes.data as any) ?? []) as SellerRow[]) : [];
+      setSellers(sellerRows);
 
-      let salesData: any[] = [];
-      const rich = await supabase
-        .from(salesTable)
-        .select("id,sale_date,price,cost,fees,notes,created_at,item,qty,event_name")
-        .order("sale_date", { ascending: false });
+      // map seller_id -> name
+      const sellerIdToName = new Map<number, string>();
+      for (const r of sellerRows) sellerIdToName.set(Number(r.id), String(r.name ?? ""));
 
-      if (!rich.error) {
-        salesData = (rich.data as any) ?? [];
-      } else {
-        const minimal = await supabase.from(salesTable).select("id,sale_date,notes,created_at").order("sale_date", { ascending: false });
-        if (minimal.error) throw minimal.error;
-        salesData = (minimal.data as any) ?? [];
-      }
+      // 2) sales headers
+      const salesRes = await supabase
+        .from("sales")
+        .select("id,sale_date,created_at,notes,seller_id")
+        .order("sale_date", { ascending: false })
+        .limit(5000);
 
-      setSales((salesData as any) ?? []);
+      if (salesRes.error) throw salesRes.error;
 
-      if (linesTable) {
-        const lRes = await supabase.from(linesTable).select("id,sale_id,qty,price,fees").order("id", { ascending: false });
-        if (!lRes.error) setSaleLines(((lRes.data as any) ?? []) as SaleLineRow[]);
-        else setSaleLines([]);
-      } else {
+      const salesRows = (((salesRes.data as any) ?? []) as SaleRow[]).map((r) => ({
+        ...r,
+        seller_name: r.seller_id != null ? sellerIdToName.get(Number(r.seller_id)) ?? null : null,
+      }));
+
+      setSales(salesRows);
+
+      const saleIds = salesRows.map((s) => s.id).filter(Boolean);
+      if (!saleIds.length) {
         setSaleLines([]);
+        setInv([]);
+        setLoading(false);
+        return;
       }
+
+      // sale_lines
+      const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
+      if (linesRes.error) throw linesRes.error;
+
+      const linesRows = ((linesRes.data as any) ?? []) as SaleLineRow[];
+      setSaleLines(linesRows);
+
+      // inventory costs
+      const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean))).map(Number);
+      if (!itemIds.length) {
+        setInv([]);
+        return;
+      }
+
+      const invRes = await supabase.from("inventory").select("id,cost").in("id", itemIds);
+      if (invRes.error) throw invRes.error;
+      setInv(((invRes.data as any) ?? []) as InvRow[]);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
       setSellers([]);
       setSales([]);
       setSaleLines([]);
+      setInv([]);
     } finally {
       setLoading(false);
     }
@@ -203,15 +208,21 @@ export default function SalesMetrics() {
     return Array.from(ys).sort((a, b) => Number(b) - Number(a));
   }, [sales]);
 
+  // ✅ ONLY CHANGE (logic): All-time filter for Year / Month
   const filteredSales = useMemo(() => {
+    const allTime = year === "ALL" || month === "ALL";
+
     return sales.filter((r) => {
       const { y, m } = ymFromISO(r.sale_date);
-      if (year && y !== year) return false;
-      if (month && m !== month) return false;
+
+      if (!allTime) {
+        if (year && y !== year) return false;
+        if (month && m !== month) return false;
+      }
 
       if (seller !== "ALL") {
-        const s = (r.seller_name ?? "").trim();
-        if (s !== seller) return false;
+        const sName = (r.seller_name ?? "").trim();
+        if (sName !== seller) return false;
       }
       return true;
     });
@@ -220,12 +231,19 @@ export default function SalesMetrics() {
   const linesBySale = useMemo(() => {
     const map = new Map<number, SaleLineRow[]>();
     for (const l of saleLines) {
-      const arr = map.get(l.sale_id) ?? [];
+      const sid = Number(l.sale_id);
+      const arr = map.get(sid) ?? [];
       arr.push(l);
-      map.set(l.sale_id, arr);
+      map.set(sid, arr);
     }
     return map;
   }, [saleLines]);
+
+  const invCostById = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const r of inv) map.set(Number(r.id), toNum(r.cost, 0));
+    return map;
+  }, [inv]);
 
   const metrics = useMemo(() => {
     const count = filteredSales.length;
@@ -234,48 +252,47 @@ export default function SalesMetrics() {
     let sumFees = 0;
     let sumCost = 0;
     let sumProfit = 0;
-    let totalItemsAcrossSales = 0;
+    let totalUnits = 0;
 
     for (const s of filteredSales) {
-      const saleId = s.id;
-      const saleLinesForSale = linesBySale.get(saleId) ?? null;
+      const saleId = Number(s.id);
+      const ls = linesBySale.get(saleId) ?? [];
 
-      if (saleLinesForSale && saleLinesForSale.length) {
-        const saleTotalPrice = saleLinesForSale.reduce((acc, l) => acc + toNum(l.price, 0), 0);
-        const saleTotalFees = saleLinesForSale.reduce((acc, l) => acc + toNum(l.fees, 0), 0);
-        const saleTotalQty = saleLinesForSale.reduce((acc, l) => acc + Math.max(0, toNum(l.qty, 0)), 0);
+      let salePrice = 0;
+      let saleFees = 0;
+      let saleCost = 0;
+      let saleUnits = 0;
 
-        sumSales += saleTotalPrice;
-        sumFees += saleTotalFees;
-        totalItemsAcrossSales += saleTotalQty;
+      for (const l of ls) {
+        const price = toNum(l.price, 0);
+        const fees = toNum(l.fees, 0);
+        const units = Math.max(0, toNum(l.units, 0));
+        const costEach = invCostById.get(Number(l.item_id)) ?? 0;
 
-        const p =
-          s.profit != null
-            ? toNum(s.profit, 0)
-            : s.sale_price != null || s.cost != null || s.fees != null
-              ? toNum(s.sale_price, 0) - toNum(s.cost, 0) - toNum(s.fees, 0)
-              : saleTotalPrice - saleTotalFees;
-
-        sumProfit += p;
-        sumCost += toNum(s.cost, 0);
-      } else {
-        sumSales += toNum(s.sale_price, 0);
-        sumFees += toNum(s.fees, 0);
-        sumCost += toNum(s.cost, 0);
-
-        const p = s.profit != null ? toNum(s.profit, 0) : toNum(s.sale_price, 0) - toNum(s.cost, 0) - toNum(s.fees, 0);
-
-        sumProfit += p;
-        totalItemsAcrossSales += 1;
+        salePrice += price;
+        saleFees += fees;
+        saleUnits += units;
+        saleCost += costEach * units;
       }
+
+      sumSales += salePrice;
+      sumFees += saleFees;
+      sumCost += saleCost;
+      totalUnits += saleUnits;
+      sumProfit += salePrice - saleFees - saleCost;
     }
 
-    const avgSellingPricePerSale = count ? sumSales / count : 0;
-    const avgItemsPerSale = count ? totalItemsAcrossSales / count : 0;
-    const avgProfitPerSale = count ? sumProfit / count : 0;
-
-    return { count, sumSales, sumFees, sumCost, sumProfit, avgSellingPricePerSale, avgItemsPerSale, avgProfitPerSale };
-  }, [filteredSales, linesBySale]);
+    return {
+      count,
+      sumSales,
+      sumProfit,
+      sumFees,
+      sumCost,
+      avgSellingPricePerSale: count ? sumSales / count : 0,
+      avgItemsPerSale: count ? totalUnits / count : 0,
+      avgProfitPerSale: count ? sumProfit / count : 0,
+    };
+  }, [filteredSales, linesBySale, invCostById]);
 
   async function addSalesperson() {
     const name = newSellerName.trim();
@@ -290,7 +307,6 @@ export default function SalesMetrics() {
         const ins2 = await supabase.from(sellerTable).insert([{ name } as any]);
         if (ins2.error) throw ins2.error;
       }
-
       setNewSellerName("");
       setAddOpen(false);
       await loadAll();
@@ -311,411 +327,344 @@ export default function SalesMetrics() {
     return nicknameFor(seller);
   }, [seller]);
 
+  const timeLabel = useMemo(() => {
+    const allTime = year === "ALL" || month === "ALL";
+    if (allTime) return "All time";
+    return `${monthName(month)} ${year}`;
+  }, [year, month]);
+
   return (
     <div className="page smX">
+      {/* ✅ VISUAL ONLY: cooler title, stronger button pulse, seller neon colors for recent rows */}
       <style>{`
-        /* =========================
-           SALES METRICS - VAMPIRIC / GOTHIC POLISH (VISUAL ONLY)
-           ========================= */
-
-        /* Page-only aura (cheap + safe) */
         .smX{
           position: relative;
           isolation: isolate;
+          overflow: hidden;
         }
+        .smX > *{ position: relative; z-index: 2; }
+
+        /* =========================================================
+           BACKGROUND AURA (VISUAL ONLY)
+           ========================================================= */
         .smX::before{
           content:"";
           position:absolute;
-          inset:-26px;
-          z-index:-1;
+          inset:-60px;
+          z-index:0;
           pointer-events:none;
           background:
-            radial-gradient(900px 520px at 18% 0%, rgba(212,175,55,0.14), transparent 60%),
-            radial-gradient(720px 520px at 82% 18%, rgba(160,20,40,0.18), transparent 62%),
-            radial-gradient(760px 520px at 55% 85%, rgba(140,90,255,0.12), transparent 60%),
-            radial-gradient(520px 360px at 20% 80%, rgba(0,210,255,0.06), transparent 65%);
-          filter: blur(10px);
+            radial-gradient(1200px 680px at 18% 0%, rgba(212,175,55,0.26), transparent 62%),
+            radial-gradient(980px 640px at 86% 18%, rgba(160,20,40,0.24), transparent 64%),
+            radial-gradient(1100px 760px at 55% 115%, rgba(140,90,255,0.22), transparent 62%),
+            radial-gradient(780px 520px at 48% 40%, rgba(0,210,255,0.09), transparent 60%),
+            linear-gradient(180deg, rgba(10,8,18,0.42), rgba(0,0,0,0.18));
+          filter: blur(14px) saturate(1.22);
           opacity: 0.98;
-          animation: smAura 8.4s ease-in-out infinite;
-        }
-
-        /* =========================================
-           EMBER STORM (VIOLENT) — VISUAL ONLY
-           ========================================= */
-        .smX::after{
-          content:"";
-          position:absolute;
-          inset:-34px;
-          z-index:-1;
-          pointer-events:none;
-
-          /* MANY ember fields + inferno base + heat shimmer-ish streak */
-          background:
-            /* BIG embers (rare, bright) */
-            radial-gradient(circle, rgba(255,235,170,0.28) 0 2px, transparent 7px),
-            radial-gradient(circle, rgba(255,160,90,0.22) 0 2px, transparent 7px),
-            radial-gradient(circle, rgba(255,90,50,0.18) 0 2px, transparent 7px),
-
-            /* MID embers (lots) */
-            radial-gradient(circle, rgba(255,220,150,0.22) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(255,170,95,0.18) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(255,120,70,0.16) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(255,80,40,0.14) 0 1px, transparent 4px),
-
-            /* FINE embers (storm) */
-            radial-gradient(circle, rgba(255,235,180,0.16) 0 1px, transparent 3px),
-            radial-gradient(circle, rgba(255,200,120,0.14) 0 1px, transparent 3px),
-            radial-gradient(circle, rgba(255,150,90,0.12) 0 1px, transparent 3px),
-            radial-gradient(circle, rgba(255,105,60,0.10) 0 1px, transparent 3px),
-
-            /* Inferno glow at bottom */
-            radial-gradient(1200px 540px at 50% 120%,
-              rgba(255,55,30,0.34) 0%,
-              rgba(255,120,55,0.20) 28%,
-              rgba(255,200,110,0.12) 52%,
-              transparent 80%),
-
-            /* Subtle hot-air shimmer streak (non-striped, soft) */
-            linear-gradient(180deg, transparent 0%, rgba(255,120,55,0.06) 55%, transparent 100%);
-
-          background-size:
-            320px 620px, /* big A */
-            360px 740px, /* big B */
-            420px 820px, /* big C */
-
-            240px 420px, /* mid A */
-            280px 500px, /* mid B */
-            320px 560px, /* mid C */
-            360px 640px, /* mid D */
-
-            140px 240px, /* fine A */
-            160px 280px, /* fine B */
-            180px 320px, /* fine C */
-            200px 360px, /* fine D */
-
-            100% 100%,   /* glow */
-            100% 100%;   /* shimmer */
-
-          background-position:
-            12% -120%,
-            76% -160%,
-            44% -210%,
-
-            20% -90%,
-            52% -140%,
-            86% -110%,
-            66% -170%,
-
-            10% -40%,
-            36% -220%,
-            62% -120%,
-            88% -260%,
-
-            50% 120%,
-            50% 0%;
-
           mix-blend-mode: screen;
-          opacity: 0.86;
-          filter: blur(0.10px);
+          animation: smAuraPulse 6.4s ease-in-out infinite;
           transform: translateZ(0);
-
-          animation:
-            smEmbersFall 1.15s linear infinite,
-            smEmbersFall2 1.85s linear infinite,
-            smEmbersFall3 2.65s linear infinite,
-            smEmbersDriftX 1.35s ease-in-out infinite,
-            smEmbersFlicker 0.75s ease-in-out infinite;
         }
 
-        @keyframes smAura{
-          0% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.92; }
-          50% { transform: translate3d(8px,-4px,0px) scale(1.03); opacity: 1; }
-          100% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.92; }
-        }
-
-        /* Main fall (fine embers dominate) */
-        @keyframes smEmbersFall{
-          0%{
-            background-position:
-              12% -120%,
-              76% -160%,
-              44% -210%,
-
-              20% -90%,
-              52% -140%,
-              86% -110%,
-              66% -170%,
-
-              10% -40%,
-              36% -220%,
-              62% -120%,
-              88% -260%,
-
-              50% 120%,
-              50% 0%;
-          }
-          100%{
-            background-position:
-              12% 180%,
-              76% 220%,
-              44% 260%,
-
-              20% 240%,
-              52% 280%,
-              86% 250%,
-              66% 300%,
-
-              10% 420%,
-              36% 520%,
-              62% 460%,
-              88% 560%,
-
-              50% 120%,
-              50% 0%;
-          }
-        }
-
-        /* Secondary fall offsets to avoid pattern lock */
-        @keyframes smEmbersFall2{
-          0%{ transform: translate3d(0px,0px,0px) scale(1); }
-          100%{ transform: translate3d(0px,3px,0px) scale(1.01); }
-        }
-
-        /* Third layer: tiny vertical “kick” so it feels chaotic */
-        @keyframes smEmbersFall3{
-          0%,100%{ filter: blur(0.10px); }
-          50%{ filter: blur(0.24px); }
-        }
-
-        /* Side drift (violent) */
-        @keyframes smEmbersDriftX{
-          0%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
-          25%{ transform: translate3d(6px,-1px,0px) skewX(-0.6deg); }
-          50%{ transform: translate3d(-8px,0px,0px) skewX(0.9deg); }
-          75%{ transform: translate3d(5px,1px,0px) skewX(-0.4deg); }
-          100%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
-        }
-
-        /* Flicker (aggressive) */
-        @keyframes smEmbersFlicker{
-          0%,100%{ opacity: 0.78; }
-          18%{ opacity: 0.92; }
-          36%{ opacity: 0.80; }
-          58%{ opacity: 0.95; }
-          78%{ opacity: 0.84; }
+        @keyframes smAuraPulse{
+          0%   { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.88; }
+          35%  { transform: translate3d(10px,-6px,0px) scale(1.03); opacity: 1; }
+          70%  { transform: translate3d(-8px,4px,0px) scale(1.02); opacity: 0.96; }
+          100% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.88; }
         }
 
         @media (prefers-reduced-motion: reduce){
-          .smX::before, .smX::after{ animation:none; }
+          .smX::before{ animation:none; }
         }
 
+        /* =========================================================
+           TOP AREA
+           ========================================================= */
         .smX .topRow{
-          display:flex;
-          align-items:flex-start;
-          justify-content: space-between;
-          gap: 12px;
-          flex-wrap: wrap;
-          margin-bottom: 10px;
+          display:flex; align-items:flex-start; justify-content: space-between;
+          gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+        }
+        .smX .controls{
+          display:flex; gap: 10px; flex-wrap: wrap; align-items:center; justify-content:flex-end;
         }
 
-        /* Gothic title treatment (no external font; still legible) */
-        .smX .gothTitle{
+        /* =========================================================
+           EXCITING "SALES" TITLE (VISUAL ONLY)
+           ========================================================= */
+        .salesTitle{
           margin: 0;
           font-weight: 1000;
-          letter-spacing: 1.1px;
-          font-variant: small-caps;
-          font-size: clamp(30px, 7.6vw, 44px);
+          letter-spacing: 0.8px;
+          text-transform: uppercase;
           line-height: 1.02;
-          color: rgba(255,255,255,0.96);
+
+          /* animated gradient fill */
+          background: linear-gradient(90deg,
+            rgba(255,255,255,0.98),
+            rgba(212,175,55,0.98),
+            rgba(255,120,60,0.95),
+            rgba(140,90,255,0.98),
+            rgba(0,210,255,0.95),
+            rgba(255,255,255,0.98)
+          );
+          background-size: 220% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+
           text-shadow:
-            0 0 12px rgba(212,175,55,0.20),
-            0 0 18px rgba(160,20,40,0.16),
-            0 16px 52px rgba(0,0,0,0.68);
+            0 0 22px rgba(212,175,55,0.16),
+            0 0 28px rgba(140,90,255,0.14),
+            0 18px 58px rgba(0,0,0,0.75);
+
+          animation: titleSheen 3.1s linear infinite;
         }
 
-        /* Little "blood-gold" underline rune */
-        .smX .titleRune{
-          display:inline-block;
-          margin-top: 6px;
-          padding: 6px 10px;
+        .salesTitleWrap{
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .salesBadge{
+          height: 26px;
+          padding: 0 10px;
           border-radius: 999px;
-          border: 1px solid rgba(212,175,55,0.20);
-          background:
-            radial-gradient(220px 60px at 30% 0%, rgba(212,175,55,0.16), transparent 60%),
-            radial-gradient(260px 80px at 80% 40%, rgba(160,20,40,0.16), transparent 62%),
-            rgba(0,0,0,0.18);
-          box-shadow:
-            0 14px 40px rgba(0,0,0,0.35),
-            0 0 18px rgba(212,175,55,0.08);
+          display: inline-flex;
+          align-items: center;
           font-size: 12px;
-          font-weight: 900;
-          color: rgba(255,255,255,0.74);
-        }
-        .smX .runeDot{
-          display:inline-block;
-          width: 7px;
-          height: 7px;
-          border-radius: 999px;
-          margin-right: 8px;
-          background: rgba(212,175,55,0.78);
-          box-shadow: 0 0 14px rgba(212,175,55,0.45);
-        }
-
-        .smX .sub{ margin-top:6px; font-size: 13px; }
-
-        .smX .controls{
-          display:flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          align-items:center;
-          justify-content:flex-end;
+          font-weight: 950;
+          letter-spacing: 0.6px;
+          color: rgba(255,255,255,0.92);
+          border: 1px solid rgba(255,255,255,0.14);
+          background:
+            radial-gradient(140px 40px at 30% 10%, rgba(255,255,255,0.12), transparent 60%),
+            linear-gradient(180deg, rgba(212,175,55,0.18), rgba(10,10,16,0.45));
+          box-shadow:
+            0 0 0 2px rgba(212,175,55,0.10),
+            0 12px 32px rgba(0,0,0,0.40),
+            0 0 22px rgba(212,175,55,0.10);
+          user-select: none;
         }
 
+        @keyframes titleSheen{
+          0%   { background-position: 0% 50%; }
+          100% { background-position: 220% 50%; }
+        }
+
+        @media (max-width: 420px){
+          .salesTitle{ font-size: 26px; }
+        }
+
+        /* =========================================================
+           FILTERS + GRID
+           ========================================================= */
         .smX .filterRow{
-          margin-top: 10px;
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
+          margin-top: 10px; display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
         }
         .smX .filterRow .full{ grid-column: 1 / -1; }
 
         .smX .grid{
-          margin-top: 12px;
-          display:grid;
-          grid-template-columns: repeat(12, 1fr);
-          gap: 10px;
+          margin-top: 12px; display:grid; grid-template-columns: repeat(12, 1fr); gap: 10px;
         }
+
+        /* KPI cards: glow up (visual only) */
         .smX .cardKpi{
           grid-column: span 6;
           padding: 12px;
           position: relative;
           overflow: hidden;
-          transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease;
           border-color: rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.26);
           box-shadow:
-            0 14px 40px rgba(0,0,0,0.35),
-            0 0 0 1px rgba(255,255,255,0.02) inset;
+            0 14px 44px rgba(0,0,0,0.42),
+            0 0 0 1px rgba(255,255,255,0.03) inset;
+          transition: transform 0.14s ease, box-shadow 0.22s ease, border-color 0.22s ease;
         }
         .smX .cardKpi::before{
           content:"";
           position:absolute;
-          inset:-1px;
-          border-radius: 18px;
+          inset:-2px;
           pointer-events:none;
           background:
-            radial-gradient(600px 240px at 15% 0%, rgba(212,175,55,0.18), transparent 60%),
-            radial-gradient(520px 220px at 85% 40%, rgba(160,20,40,0.14), transparent 62%),
-            linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+            radial-gradient(700px 260px at 15% 0%, rgba(212,175,55,0.18), transparent 60%),
+            radial-gradient(620px 240px at 85% 40%, rgba(160,20,40,0.14), transparent 62%),
+            radial-gradient(520px 220px at 50% 120%, rgba(140,90,255,0.12), transparent 62%),
+            linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
           opacity: 0.70;
-          filter: blur(0.4px);
+          filter: blur(0.5px);
         }
         .smX .cardKpi:hover{
-          transform: translateY(-1px);
-          border-color: rgba(212,175,55,0.22);
+          transform: translateY(-2px);
+          border-color: rgba(212,175,55,0.30);
           box-shadow:
-            0 18px 55px rgba(0,0,0,0.45),
-            0 0 22px rgba(212,175,55,0.10);
+            0 20px 70px rgba(0,0,0,0.52),
+            0 0 28px rgba(212,175,55,0.12),
+            0 0 22px rgba(140,90,255,0.10);
         }
         .smX .kpiLabel{
-          font-size: 12px;
-          font-weight: 950;
-          color: rgba(255,255,255,0.70);
-          position: relative;
-          z-index: 1;
+          font-size: 12px; font-weight: 950; color: rgba(255,255,255,0.72);
+          position: relative; z-index: 1;
+          text-shadow: 0 0 12px rgba(0,0,0,0.35);
         }
         .smX .kpiVal{
-          margin-top: 5px;
-          font-size: 22px;
-          font-weight: 950;
-          letter-spacing: 0.2px;
-          position: relative;
-          z-index: 1;
+          margin-top: 5px; font-size: 22px; font-weight: 950;
+          position: relative; z-index: 1;
           text-shadow:
-            0 0 16px rgba(212,175,55,0.12),
-            0 12px 30px rgba(0,0,0,0.45);
+            0 0 18px rgba(212,175,55,0.10),
+            0 0 24px rgba(140,90,255,0.10),
+            0 12px 34px rgba(0,0,0,0.55);
         }
 
-        .smX .list{
-          margin-top: 12px;
-          padding: 12px;
+        /* =========================================================
+           BUTTON POP: "NEW CLIENT" vibe (here: + Add Salesperson)
+           Visual-only: glow + BIG pulse
+           ========================================================= */
+        .btnPop{
           position: relative;
-          overflow: hidden;
+          isolation: isolate;
+          transform: translateZ(0);
+          border-color: rgba(255,255,255,0.22) !important;
+          box-shadow:
+            0 0 0 2px rgba(212,175,55,0.12),
+            0 16px 40px rgba(0,0,0,0.38),
+            0 0 26px rgba(212,175,55,0.18);
+          animation: btnPopPulse 1.15s ease-in-out infinite;
         }
-        .smX .list::before{
+        .btnPop::before{
           content:"";
           position:absolute;
-          inset:-40% -30%;
+          inset:-3px;
+          border-radius: inherit;
           pointer-events:none;
           background:
-            linear-gradient(115deg, transparent 0%, rgba(212,175,55,0.10) 22%, transparent 45%, rgba(160,20,40,0.10) 70%, transparent 100%);
-          opacity: 0.16;
-          transform: rotate(-8deg);
+            radial-gradient(220px 80px at 30% 10%, rgba(255,255,255,0.20), transparent 65%),
+            radial-gradient(260px 110px at 70% 40%, rgba(212,175,55,0.40), transparent 70%),
+            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.22), rgba(255,255,255,0.00));
+          mix-blend-mode: screen;
+          opacity: 0.70;
+          filter: blur(0.2px);
+          animation: btnPopSheen 1.65s linear infinite;
+        }
+        .btnPop::after{
+          content:"";
+          position:absolute;
+          inset:-10px;
+          border-radius: inherit;
+          pointer-events:none;
+          background: radial-gradient(closest-side, rgba(212,175,55,0.30), transparent 70%);
+          opacity: 0.0;
+          animation: btnPopRing 1.15s ease-out infinite;
         }
 
+        @keyframes btnPopPulse{
+          0%   { transform: translateY(0px) scale(1); filter: brightness(1.05) saturate(1.15); }
+          50%  { transform: translateY(-1px) scale(1.02); filter: brightness(1.22) saturate(1.35); }
+          100% { transform: translateY(0px) scale(1); filter: brightness(1.05) saturate(1.15); }
+        }
+        @keyframes btnPopSheen{
+          0%   { background-position: -120% 0%; opacity: 0.55; }
+          40%  { opacity: 0.95; }
+          100% { background-position: 220% 0%; opacity: 0.55; }
+        }
+        @keyframes btnPopRing{
+          0%   { opacity: 0.35; transform: scale(0.92); }
+          60%  { opacity: 0.10; transform: scale(1.18); }
+          100% { opacity: 0.0; transform: scale(1.28); }
+        }
+
+        @media (prefers-reduced-motion: reduce){
+          .btnPop{ animation:none; }
+          .btnPop::before, .btnPop::after{ animation:none; }
+        }
+
+        /* =========================================================
+           RECENT SALES LIST (function unchanged) + SELLER NEON THEMES
+           ========================================================= */
+        .smX .list{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.24); }
         .smX .saleRow{
-          display:flex;
-          justify-content: space-between;
-          gap: 10px;
-          padding: 10px 0;
+          display:flex; justify-content: space-between; gap: 10px; padding: 10px 0;
           border-bottom: 1px solid rgba(255,255,255,0.08);
         }
         .smX .saleRow:last-child{ border-bottom:none; }
         .smX .left{ min-width: 0; }
         .smX .title{
-          font-weight: 950;
-          overflow:hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-weight: 950; overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .smX .meta{
-          margin-top: 3px;
-          font-size: 12px;
-          color: rgba(255,255,255,0.65);
-          overflow:hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          margin-top: 3px; font-size: 12px; color: rgba(255,255,255,0.65);
+          overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        .smX .right{
-          text-align:right;
-          flex: 0 0 auto;
+        .smX .right{ text-align:right; flex: 0 0 auto; }
+
+        /* neon frame per seller (visual only) */
+        .saleGlow{
+          position: relative;
+          padding: 10px 0;
+          margin: 0;
+        }
+        .saleGlow::before{
+          content:"";
+          position:absolute;
+          left: -10px;
+          right: -10px;
+          top: 0px;
+          bottom: 0px;
+          border-radius: 14px;
+          pointer-events:none;
+          opacity: 0.0;
+          transform: scale(0.995);
+          transition: opacity .18s ease, transform .18s ease;
+        }
+        .saleGlow:hover::before{
+          opacity: 0.75;
+          transform: scale(1);
         }
 
+        /* Chadillac = neon orange */
+        .saleGlow.chad::before{
+          background:
+            radial-gradient(380px 70px at 18% 40%, rgba(255,190,120,0.22), transparent 65%),
+            radial-gradient(420px 90px at 82% 40%, rgba(255,120,40,0.20), transparent 70%),
+            linear-gradient(90deg, rgba(255,120,40,0.00), rgba(255,120,40,0.18), rgba(255,120,40,0.00));
+          box-shadow:
+            0 0 0 1px rgba(255,120,40,0.18) inset,
+            0 0 26px rgba(255,120,40,0.14);
+        }
+
+        /* Devan the Dude = neon blue */
+        .saleGlow.devan::before{
+          background:
+            radial-gradient(380px 70px at 18% 40%, rgba(160,220,255,0.20), transparent 65%),
+            radial-gradient(420px 90px at 82% 40%, rgba(0,170,255,0.18), transparent 70%),
+            linear-gradient(90deg, rgba(0,170,255,0.00), rgba(0,170,255,0.16), rgba(0,170,255,0.00));
+          box-shadow:
+            0 0 0 1px rgba(0,170,255,0.16) inset,
+            0 0 26px rgba(0,170,255,0.12);
+        }
+
+        /* default (others) */
+        .saleGlow.other::before{
+          background:
+            radial-gradient(420px 90px at 30% 40%, rgba(140,90,255,0.14), transparent 70%),
+            linear-gradient(90deg, rgba(140,90,255,0.00), rgba(140,90,255,0.12), rgba(140,90,255,0.00));
+          box-shadow:
+            0 0 0 1px rgba(140,90,255,0.10) inset,
+            0 0 22px rgba(140,90,255,0.10);
+        }
+
+        /* Modal */
         .smX .overlay{
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.72);
-          display:flex;
-          align-items:flex-end;
-          justify-content:center;
-          padding: 10px;
-          z-index: 500;
+          position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+          display:flex; align-items:flex-end; justify-content:center; padding: 10px; z-index: 500;
         }
-
-        /* ONLY CHANGE: lift the sheet up a bit on mobile so it doesn't hug the bottom */
         .smX .sheet{
           width: min(980px, 100%);
           border-radius: 22px;
           border: 1px solid rgba(212,175,55,0.20);
           background: rgba(8,10,18,0.92);
-          box-shadow: 0 24px 70px rgba(0,0,0,0.55);
-          backdrop-filter: blur(12px);
           padding: 14px;
-          padding-bottom: calc(14px + env(safe-area-inset-bottom));
-          margin-bottom: calc(22px + env(safe-area-inset-bottom));
-        }
-        @media (max-width: 820px){
-          .smX .sheet{
-            margin-bottom: calc(58px + env(safe-area-inset-bottom));
-          }
-        }
-
-        .smX .sheet h2{ margin:0; font-size: 16px; }
-        .smX .sheet .input{
-          height: 46px;
-          border-radius: 16px;
-          font-weight: 900;
-          font-size: 16px;
-          margin-top: 12px;
+          box-shadow: 0 24px 80px rgba(0,0,0,0.62), 0 0 30px rgba(212,175,55,0.10);
+          backdrop-filter: blur(12px);
         }
 
         input, select, textarea { font-size: 16px; }
@@ -728,31 +677,33 @@ export default function SalesMetrics() {
 
       <div className="topRow">
         <div>
-          <h1 className="gothTitle">Sales Metrics</h1>
+          {/* ✅ visual-only: cooler title */}
+          <div className="salesTitleWrap">
+            <h1 className="salesTitle">Sales</h1>
+            <span className="salesBadge">METRICS</span>
+          </div>
 
-          <div className="muted sub">
+          <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
             Month + Year + Seller totals. Includes avg items/sale + avg selling price/sale.
           </div>
 
-          <div className="titleRune">
-            <span className="runeDot" />
+          {/* Just a small visual label line (no behavior change) */}
+          <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,0.74)" }}>
             {selectedSellerDisplay}
             {selectedSellerNickname ? <span style={{ color: "rgba(212,175,55,0.95)" }}> • {selectedSellerNickname}</span> : null}
             <span className="muted" style={{ fontWeight: 800 }}>
               {" "}
-              • {monthName(month)} {year}
+              • {timeLabel}
             </span>
-          </div>
-
-          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-            ꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂·☁︎ ⋆.˚ ☾⭒.˚ ꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂⋆.ೃ࿔☁︎ ݁ ˖*༄꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂
           </div>
         </div>
 
         <div className="controls">
-          <button className="btn" type="button" onClick={() => setAddOpen(true)}>
+          {/* ✅ visual-only: make this glow/pulse harder */}
+          <button className="btn btnPop" type="button" onClick={() => setAddOpen(true)}>
             + Add Salesperson
           </button>
+
           <button className="btn" type="button" onClick={() => void loadAll()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
@@ -765,8 +716,7 @@ export default function SalesMetrics() {
         </div>
       ) : null}
 
-      {/* Filters */}
-      <div className="card" style={{ padding: 12, marginTop: 10 }}>
+      <div className="card" style={{ padding: 12, marginTop: 10, background: "rgba(0,0,0,0.22)" }}>
         <div style={{ fontWeight: 950, marginBottom: 8 }}>Filters</div>
 
         <div className="filterRow">
@@ -774,7 +724,10 @@ export default function SalesMetrics() {
             <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
               Year
             </div>
+
+            {/* ✅ Added: ALL */}
             <select className="input" value={year} onChange={(e) => setYear(e.target.value)}>
+              <option value="ALL">All time</option>
               {yearOptions.map((y) => (
                 <option key={y} value={y}>
                   {y}
@@ -787,7 +740,10 @@ export default function SalesMetrics() {
             <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
               Month
             </div>
+
+            {/* ✅ Added: ALL */}
             <select className="input" value={month} onChange={(e) => setMonth(e.target.value)}>
+              <option value="ALL">All time</option>
               {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => (
                 <option key={m} value={m}>
                   {monthName(m)}
@@ -813,7 +769,6 @@ export default function SalesMetrics() {
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid">
         <div className="card cardKpi">
           <div className="kpiLabel">Sales Count</div>
@@ -856,7 +811,6 @@ export default function SalesMetrics() {
         </div>
       </div>
 
-      {/* Recent list */}
       <div className="card list">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
           <div style={{ fontWeight: 950 }}>Recent Sales (filtered)</div>
@@ -867,13 +821,30 @@ export default function SalesMetrics() {
 
         <div style={{ marginTop: 8 }}>
           {filteredSales.slice(0, 40).map((r) => {
-            const p = r.profit != null ? toNum(r.profit, 0) : toNum(r.sale_price, 0) - toNum(r.cost, 0) - toNum(r.fees, 0);
+            const ls = linesBySale.get(Number(r.id)) ?? [];
+            let saleTotal = 0;
+            let feeTotal = 0;
+            let costTotal = 0;
+
+            for (const l of ls) {
+              const price = toNum(l.price, 0);
+              const fees = toNum(l.fees, 0);
+              const units = Math.max(0, toNum(l.units, 0));
+              const costEach = invCostById.get(Number(l.item_id)) ?? 0;
+
+              saleTotal += price;
+              feeTotal += fees;
+              costTotal += costEach * units;
+            }
+
+            const p = saleTotal - feeTotal - costTotal;
+            const tone = sellerTone(r.seller_name);
 
             return (
-              <div key={r.id} className="saleRow">
+              <div key={r.id} className={`saleRow saleGlow ${tone}`}>
                 <div className="left" style={{ minWidth: 0 }}>
                   <div className="title">
-                    {r.seller_name ? r.seller_name : "Sale"}{" "}
+                    {r.seller_name ? displaySellerName(r.seller_name) : "Sale"}{" "}
                     <span className="muted" style={{ fontWeight: 900 }}>
                       • #{r.id}
                     </span>
@@ -884,7 +855,7 @@ export default function SalesMetrics() {
                   </div>
                 </div>
                 <div className="right">
-                  <div style={{ fontWeight: 950 }}>{money(toNum(r.sale_price, 0))}</div>
+                  <div style={{ fontWeight: 950 }}>{money(saleTotal)}</div>
                   <div className="muted" style={{ fontSize: 12 }}>
                     Profit: {money(p)}
                   </div>
@@ -897,13 +868,12 @@ export default function SalesMetrics() {
         </div>
       </div>
 
-      {/* Add salesperson sheet */}
       {addOpen ? (
         <div className="overlay" onClick={() => setAddOpen(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
               <div>
-                <h2>Add Salesperson</h2>
+                <h2 style={{ margin: 0, fontSize: 16 }}>Add Salesperson</h2>
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                   Saves to <b>{sellerTable}</b>.
                 </div>
@@ -919,6 +889,7 @@ export default function SalesMetrics() {
               onChange={(e) => setNewSellerName(e.target.value)}
               placeholder="Name (ex: Devan, Chad)"
               autoFocus
+              style={{ marginTop: 12 }}
             />
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>

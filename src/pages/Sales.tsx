@@ -22,6 +22,7 @@ type RecentSale = {
   sale_date?: string | null;
   created_at?: string | null;
   client_name?: string | null;
+  seller_name?: string | null; // ✅ NEW
   item_name?: string | null;
   units?: number | null;
   profit?: number | null;
@@ -113,10 +114,10 @@ function ItemSearchDropdown({
               width: menuPos.width,
               zIndex: 999999,
               borderRadius: 16,
-              border: "1px solid rgba(120,160,255,0.18)",
-              background: "rgba(0,0,0,0.78)",
+              border: "1px solid rgba(60,200,120,0.22)",
+              background: "rgba(0,0,0,0.80)",
               backdropFilter: "blur(14px)",
-              boxShadow: "0 18px 55px rgba(0,0,0,0.45)",
+              boxShadow: "0 18px 55px rgba(0,0,0,0.45), 0 0 28px rgba(60,200,120,0.10)",
               overflow: "hidden",
             }}
             role="listbox"
@@ -172,7 +173,7 @@ function ItemSearchDropdown({
                       width: "100%",
                       padding: "10px 12px",
                       textAlign: "left",
-                      background: value === it.id ? "rgba(120,160,255,0.14)" : "transparent",
+                      background: value === it.id ? "rgba(60,200,120,0.16)" : "transparent",
                       border: 0,
                       color: "rgba(255,255,255,0.92)",
                       cursor: "pointer",
@@ -216,6 +217,10 @@ function ItemSearchDropdown({
 }
 
 export default function Sales() {
+  // ✅ Requested labels
+  const ALL_YEARS = "All time - years";
+  const ALL_MONTHS = "All time - months";
+
   const [clients, setClients] = useState<Client[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -231,8 +236,8 @@ export default function Sales() {
   const [err, setErr] = useState("");
 
   const [recent, setRecent] = useState<RecentSale[]>([]);
-  const [year, setYear] = useState<string>("All time");
-  const [month, setMonth] = useState<string>("All time");
+  const [year, setYear] = useState<string>(ALL_YEARS);
+  const [month, setMonth] = useState<string>(ALL_MONTHS);
   const [day, setDay] = useState<string>("");
 
   // ✅ inventory is PRIMARY (this is where your items are)
@@ -326,20 +331,118 @@ export default function Sales() {
     setLoading(true);
     setErr("");
     try {
-      const fallback = await supabase
+      // 1) Load sale headers (include seller_id)
+      const salesRes = await supabase
         .from("sales")
-        .select("id,sale_date,created_at,notes")
+        .select("id,sale_date,created_at,notes,client_id,seller_id")
         .order("sale_date", { ascending: false })
         .limit(200);
 
-      if (fallback.error) throw fallback.error;
+      if (salesRes.error) throw salesRes.error;
 
-      const mapped: RecentSale[] = ((fallback.data as any[]) ?? []).map((r) => ({
-        id: r.id,
-        sale_date: r.sale_date ?? null,
-        created_at: r.created_at ?? null,
-        note: r.notes ?? null,
-      }));
+      const salesRows = (salesRes.data as any[]) ?? [];
+      const saleIds = salesRows.map((s) => s.id).filter(Boolean);
+
+      if (saleIds.length === 0) {
+        setRecent([]);
+        setLoading(false);
+        return;
+      }
+
+      // 2) Try to load sale_lines (SAFE: don’t break if table doesn’t exist)
+      let linesRows: any[] = [];
+      try {
+        const linesRes = await supabase
+          .from("sale_lines")
+          .select("sale_id,item_id,units,price,fees")
+          .in("sale_id", saleIds);
+
+        if (linesRes.error) throw linesRes.error;
+        linesRows = (linesRes.data as any[]) ?? [];
+      } catch (e: any) {
+        console.warn("sale_lines not available (safe fallback):", e?.message ?? e);
+        linesRows = [];
+      }
+
+      // 3) Load inventory names for the item_ids
+      const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean)));
+
+      const invMap = new Map<number, { name: string; cost: number }>();
+      if (itemIds.length > 0) {
+        const invRes = await supabase.from("inventory").select("id,item,cost").in("id", itemIds);
+        if (invRes.error) throw invRes.error;
+
+        for (const r of (invRes.data as any[]) ?? []) {
+          invMap.set(Number(r.id), { name: String(r.item ?? "").trim(), cost: Number(r.cost ?? 0) });
+        }
+      }
+
+      // 4) Client names
+      const clientIds = Array.from(new Set(salesRows.map((s) => s.client_id).filter(Boolean)));
+      const clientMap = new Map<number, string>();
+
+      if (clientIds.length > 0) {
+        const cRes = await supabase.from("clients").select("id,name").in("id", clientIds);
+        if (cRes.error) throw cRes.error;
+
+        for (const c of (cRes.data as any[]) ?? []) {
+          clientMap.set(Number(c.id), String(c.name ?? "Unnamed"));
+        }
+      }
+
+      // ✅ 5) Seller names (Salesperson column)
+      const sellerIds = Array.from(new Set(salesRows.map((s) => s.seller_id).filter(Boolean)));
+      const sellerMap = new Map<number, string>();
+
+      if (sellerIds.length > 0) {
+        const sRes = await supabase.from("sales_people").select("id,name").in("id", sellerIds);
+        if (!sRes.error) {
+          for (const s of (sRes.data as any[]) ?? []) {
+            sellerMap.set(Number(s.id), String(s.name ?? "Unnamed"));
+          }
+        }
+      }
+
+      // 6) Group lines by sale_id
+      const linesBySale = new Map<number, any[]>();
+      for (const l of linesRows) {
+        const sid = Number(l.sale_id);
+        if (!linesBySale.has(sid)) linesBySale.set(sid, []);
+        linesBySale.get(sid)!.push(l);
+      }
+
+      const mapped: RecentSale[] = salesRows.map((s) => {
+        const sid = Number(s.id);
+        const saleLines = linesBySale.get(sid) ?? [];
+
+        const distinctItemIds = Array.from(new Set(saleLines.map((l) => l.item_id).filter(Boolean)));
+        const firstItemName =
+          distinctItemIds.length > 0 ? (invMap.get(Number(distinctItemIds[0]))?.name ?? "—") : "—";
+
+        const item_name = distinctItemIds.length <= 1 ? firstItemName : `Multiple items (${distinctItemIds.length})`;
+
+        const units = saleLines.reduce((sum, l) => sum + Number(l.units ?? 0), 0);
+
+        const profit = saleLines.reduce((sum, l) => {
+          const cost = invMap.get(Number(l.item_id))?.cost ?? 0;
+          const u = Number(l.units ?? 0);
+          const price = Number(l.price ?? 0);
+          const fees = Number(l.fees ?? 0);
+          return sum + (price - fees - cost * u);
+        }, 0);
+
+        return {
+          id: sid,
+          sale_date: s.sale_date ?? null,
+          created_at: s.created_at ?? null,
+          client_name: s.client_id ? clientMap.get(Number(s.client_id)) ?? "—" : "—",
+          seller_name: s.seller_id ? sellerMap.get(Number(s.seller_id)) ?? "—" : "—",
+          item_name,
+          units: saleLines.length ? units : null,
+          profit: saleLines.length ? profit : null,
+          note: s.notes ?? null,
+        };
+      });
 
       setRecent(mapped);
     } catch (e: any) {
@@ -360,17 +463,17 @@ export default function Sales() {
       const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
       if (d && d.length >= 4) s.add(d.slice(0, 4));
     }
-    return ["All time", ...Array.from(s).sort((a, b) => b.localeCompare(a))];
+    return [ALL_YEARS, ...Array.from(s).sort((a, b) => b.localeCompare(a))];
   }, [recent]);
 
   const months = useMemo(() => {
-    if (year === "All time") return ["All time"];
+    if (year === ALL_YEARS) return [ALL_MONTHS];
     const s = new Set<string>();
     for (const r of recent) {
       const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
       if (d.startsWith(year + "-")) s.add(d.slice(5, 7));
     }
-    return ["All time", ...Array.from(s).sort((a, b) => b.localeCompare(a))];
+    return [ALL_MONTHS, ...Array.from(s).sort((a, b) => b.localeCompare(a))];
   }, [recent, year]);
 
   const filteredRecent = useMemo(() => {
@@ -378,8 +481,8 @@ export default function Sales() {
       const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
       if (!d) return false;
       if (day) return d === day;
-      if (year !== "All time" && d.slice(0, 4) !== year) return false;
-      if (month !== "All time" && d.slice(5, 7) !== month) return false;
+      if (year !== ALL_YEARS && d.slice(0, 4) !== year) return false;
+      if (month !== ALL_MONTHS && d.slice(5, 7) !== month) return false;
       return true;
     });
   }, [recent, year, month, day]);
@@ -432,6 +535,7 @@ export default function Sales() {
         fees: Number(l.fees || 0),
       }));
 
+      // NOTE: if sale_lines doesn't exist, this will warn but not break
       const lineInsert = await supabase.from("sale_lines").insert(linesPayload);
       if (lineInsert.error) {
         console.warn("sale_lines insert failed (table may not exist):", lineInsert.error.message);
@@ -452,28 +556,61 @@ export default function Sales() {
   }
 
   return (
-    <div className="page salesNebula">
+    <div className="page salesEarth">
       <style>{`
-        .salesNebula{
+        .salesEarth{
           position: relative;
           isolation: isolate;
           padding-bottom: 20px;
         }
-        .salesNebula:before{
+
+        /* ✅ EARTH / GREEN ENVIRONMENT BACKDROP (visual only) */
+        .salesEarth:before{
           content:"";
           position: fixed;
           inset: 0;
           pointer-events:none;
           z-index: 0;
           background:
-            radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
-            radial-gradient(560px 420px at 90% 14%, rgba(152,90,255,0.14), transparent 55%),
-            radial-gradient(720px 520px at 75% 35%, rgba(212,175,55,0.08), transparent 60%),
-            radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
-            linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.88));
+            radial-gradient(980px 520px at 12% 10%, rgba(70,255,140,0.18), transparent 60%),
+            radial-gradient(820px 520px at 88% 14%, rgba(40,190,110,0.14), transparent 62%),
+            radial-gradient(900px 620px at 45% 98%, rgba(0,0,0,0.92), transparent 55%),
+            linear-gradient(180deg, rgba(0,0,0,0.30), rgba(0,0,0,0.90));
           opacity: .98;
         }
-        .salesNebula > *{ position: relative; z-index: 1; }
+
+        /* vines + caustic shimmer overlay */
+        .salesEarth:after{
+          content:"";
+          position: fixed;
+          inset: -40px;
+          pointer-events:none;
+          z-index: 0;
+          opacity: 0.58;
+          mix-blend-mode: screen;
+          filter: blur(0.2px) saturate(1.25);
+          background:
+            repeating-radial-gradient(circle at 18% 12%,
+              rgba(255,255,255,0.00) 0 12px,
+              rgba(120,255,170,0.10) 14px,
+              rgba(255,255,255,0.00) 26px),
+            repeating-radial-gradient(circle at 72% 38%,
+              rgba(0,255,120,0.00) 0 14px,
+              rgba(0,255,120,0.08) 16px,
+              rgba(0,255,120,0.00) 30px),
+            /* vine strands */
+            linear-gradient(115deg, transparent 0%, rgba(70,255,140,0.06) 24%, transparent 44%),
+            linear-gradient(65deg, transparent 0%, rgba(40,190,110,0.05) 22%, transparent 46%);
+          animation: earthShimmer 6.2s ease-in-out infinite;
+        }
+
+        @keyframes earthShimmer{
+          0%{ transform: translate3d(0,0,0); opacity: 0.50; }
+          50%{ transform: translate3d(10px,-8px,0); opacity: 0.68; }
+          100%{ transform: translate3d(0,0,0); opacity: 0.50; }
+        }
+
+        .salesEarth > *{ position: relative; z-index: 1; }
 
         .salesHeader{
           display:flex;
@@ -482,18 +619,84 @@ export default function Sales() {
           gap: 12px;
           flex-wrap: wrap;
         }
-        .salesTitle h1{ margin:0; font-size: 28px; letter-spacing: .2px; }
-        .salesTitle .muted{ margin-top: 6px; }
+
+        /* ✅ Big glowing title that still fits mobile */
+        .salesTitle{
+          min-width: 0;
+        }
+        .salesTitle h1{
+          margin:0;
+          font-size: 30px;
+          letter-spacing: .3px;
+          font-weight: 950;
+          position: relative;
+          display: inline-block;
+          text-shadow:
+            0 0 18px rgba(70,255,140,0.18),
+            0 0 26px rgba(40,190,110,0.14),
+            0 18px 60px rgba(0,0,0,0.70);
+        }
+        .salesTitle h1 .titleShimmer{
+          position:absolute;
+          inset:-2px -18px -2px -18px;
+          border-radius: 14px;
+          pointer-events:none;
+          background: linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255,255,255,0.00) 35%,
+            rgba(200,255,220,0.26) 45%,
+            rgba(255,255,255,0.06) 55%,
+            transparent 70%
+          );
+          transform: translateX(-65%) skewX(-10deg);
+          mix-blend-mode: screen;
+          opacity: 0.75;
+          animation: titleSweep 2.9s linear infinite;
+        }
+
+        @keyframes titleSweep{
+          0%   { transform: translateX(-70%) skewX(-10deg); opacity: 0.52; }
+          40%  { opacity: 0.92; }
+          100% { transform: translateX(70%) skewX(-10deg); opacity: 0.56; }
+        }
+
+        .salesTitle .muted{
+          margin-top: 6px;
+          text-shadow: 0 0 18px rgba(70,255,140,0.08);
+        }
 
         .salesCard{
           margin-top: 12px;
           border-radius: 18px;
-          border: 1px solid rgba(120,160,255,0.14);
-          background: rgba(0,0,0,0.36);
+          border: 1px solid rgba(60,200,120,0.18);
+          background: rgba(0,0,0,0.34);
           backdrop-filter: blur(12px);
-          box-shadow: 0 18px 55px rgba(0,0,0,0.32);
+          box-shadow: 0 18px 55px rgba(0,0,0,0.32), 0 0 28px rgba(60,200,120,0.06);
           padding: 14px;
+          position: relative;
         }
+
+        /* subtle “living” glow on cards */
+        .salesCard:before{
+          content:"";
+          position:absolute;
+          inset:-1px;
+          border-radius: 18px;
+          pointer-events:none;
+          background:
+            radial-gradient(520px 220px at 20% 0%, rgba(70,255,140,0.12), transparent 60%),
+            radial-gradient(620px 260px at 85% 20%, rgba(40,190,110,0.10), transparent 62%);
+          opacity: 0.75;
+          filter: blur(10px);
+          animation: cardBreath 6.8s ease-in-out infinite;
+        }
+        @keyframes cardBreath{
+          0%{ opacity: 0.55; transform: translate3d(0,0,0) scale(1); }
+          50%{ opacity: 0.95; transform: translate3d(6px,-4px,0) scale(1.01); }
+          100%{ opacity: 0.55; transform: translate3d(0,0,0) scale(1); }
+        }
+        .salesCard > *{ position: relative; z-index: 1; }
 
         .topRow{
           display:flex;
@@ -503,15 +706,17 @@ export default function Sales() {
           flex-wrap: wrap;
         }
 
+        /* green pill */
         .pillGold{
           font-size: 12px;
           font-weight: 950;
           padding: 7px 10px;
           border-radius: 999px;
-          border: 1px solid rgba(212,175,55,0.22);
-          background: rgba(212,175,55,0.10);
-          color: rgba(255,255,255,0.88);
+          border: 1px solid rgba(70,255,140,0.22);
+          background: rgba(70,255,140,0.10);
+          color: rgba(230,255,240,0.92);
           white-space: nowrap;
+          box-shadow: 0 0 0 2px rgba(70,255,140,0.06), 0 0 18px rgba(70,255,140,0.08);
         }
 
         .clientRow{
@@ -522,11 +727,13 @@ export default function Sales() {
           align-items: stretch;
         }
 
+        /* make section labels glow subtly */
         .label{
           font-size: 12px;
           font-weight: 900;
-          color: rgba(255,255,255,0.55);
+          color: rgba(220,255,235,0.72);
           margin-bottom: 6px;
+          text-shadow: 0 0 16px rgba(70,255,140,0.10);
         }
 
         .lineHeader{
@@ -535,7 +742,7 @@ export default function Sales() {
           gap: 10px;
           margin-top: 14px;
           padding: 0 2px;
-          color: rgba(255,255,255,0.78);
+          color: rgba(235,255,245,0.84);
           font-size: 12px;
           font-weight: 950;
           letter-spacing: .15px;
@@ -550,6 +757,7 @@ export default function Sales() {
           align-items: center;
         }
 
+        /* glowing remove button */
         .xBtn{
           width: 44px;
           height: 44px;
@@ -559,12 +767,21 @@ export default function Sales() {
           color: rgba(255,255,255,0.9);
           font-weight: 950;
           cursor: pointer;
+          box-shadow: 0 0 0 2px rgba(70,255,140,0.05), 0 0 18px rgba(70,255,140,0.10);
+          transition: transform .05s ease, border-color .15s ease, box-shadow .15s ease, filter .15s ease;
         }
+        .xBtn:hover{
+          border-color: rgba(70,255,140,0.22);
+          box-shadow: 0 0 0 3px rgba(70,255,140,0.08), 0 0 26px rgba(70,255,140,0.14);
+          filter: brightness(1.12);
+        }
+        .xBtn:active{ transform: translateY(1px); }
 
         .lineProfit{
           margin-top: 8px;
           font-size: 12px;
-          color: rgba(255,255,255,0.65);
+          color: rgba(255,255,255,0.70);
+          text-shadow: 0 0 18px rgba(70,255,140,0.06);
         }
 
         .actionsRow{
@@ -580,37 +797,58 @@ export default function Sales() {
         .recentHeader{
           display:flex;
           justify-content: space-between;
-          align-items: center;
+          align-items: flex-start;
           gap: 10px;
           flex-wrap: wrap;
         }
+
+        /* ✅ Recent Sales glow */
+        .recentWrap{
+          border-color: rgba(70,255,140,0.22);
+          box-shadow: 0 18px 60px rgba(0,0,0,0.34), 0 0 34px rgba(70,255,140,0.10);
+        }
+
+        /* ✅ CONDENSED + UNIFORM FILTERS (visual only) */
         .filters{
           display:grid;
-          grid-template-columns: 1fr;
-          gap: 10px;
-          width: min(520px, 100%);
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          width: min(720px, 100%);
+          align-items: end;
         }
         .filters .input{ height: 44px; border-radius: 16px; }
+
+        @media (max-width: 820px){
+          .filters{
+            grid-template-columns: 1fr;
+          }
+          .label{ text-align: left !important; }
+        }
 
         .salesTable{
           margin-top: 12px;
           overflow: hidden;
           border-radius: 18px;
           border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(0,0,0,0.30);
+          background: rgba(0,0,0,0.26);
+          box-shadow: 0 0 26px rgba(70,255,140,0.06);
         }
+
+        /* ✅ Added Salesperson column */
         .salesTableHead, .salesTableRow{
           display:grid;
-          grid-template-columns: 160px 140px 1fr 110px 120px 1.2fr 120px;
+          grid-template-columns: 150px 140px 160px 1fr 110px 120px 1.2fr 120px;
           gap: 10px;
           padding: 12px 12px;
           align-items: center;
         }
+
         .salesTableHead{
           font-size: 12px;
           font-weight: 950;
-          color: rgba(255,255,255,0.55);
+          color: rgba(220,255,235,0.72);
           border-bottom: 1px solid rgba(255,255,255,0.08);
+          text-shadow: 0 0 18px rgba(70,255,140,0.06);
         }
         .salesTableRow{
           border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -618,8 +856,16 @@ export default function Sales() {
         }
         .salesTableRow:last-child{ border-bottom: 0; }
 
+        .salesTableRow:hover{
+          background: rgba(70,255,140,0.05);
+          box-shadow: inset 0 0 0 1px rgba(70,255,140,0.10);
+        }
+
         .right{ text-align: right; }
-        .bold{ font-weight: 950; }
+        .bold{
+          font-weight: 950;
+          text-shadow: 0 0 14px rgba(70,255,140,0.10);
+        }
 
         @media (max-width: 900px){
           .salesTableHead{ display:none; }
@@ -635,7 +881,7 @@ export default function Sales() {
           }
           .salesTableRow > div:before{
             content: attr(data-k);
-            color: rgba(255,255,255,0.55);
+            color: rgba(220,255,235,0.72);
             font-weight: 900;
           }
         }
@@ -658,12 +904,41 @@ export default function Sales() {
           }
         }
 
+        /* Inputs: keep behavior, just add a green focus glow (visual only) */
+        .input{
+          transition: box-shadow .15s ease, border-color .15s ease, filter .15s ease;
+        }
+        .input:focus{
+          border-color: rgba(70,255,140,0.26) !important;
+          box-shadow: 0 0 0 4px rgba(70,255,140,0.10) !important;
+        }
+
+        /* Buttons: green glow pulse */
+        .btn{
+          box-shadow: 0 0 0 2px rgba(70,255,140,0.04), 0 0 18px rgba(70,255,140,0.06);
+          transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease, filter .15s ease;
+        }
+        .btn:hover{
+          box-shadow: 0 0 0 3px rgba(70,255,140,0.08), 0 0 26px rgba(70,255,140,0.10);
+          filter: brightness(1.08);
+        }
+
+        /* Accessibility */
+        @media (prefers-reduced-motion: reduce){
+          .salesEarth:after{ animation:none; }
+          .salesTitle h1 .titleShimmer{ animation:none; }
+          .salesCard:before{ animation:none; }
+        }
+
         input, select, textarea { font-size: 16px; }
       `}</style>
 
       <div className="salesHeader">
         <div className="salesTitle">
-          <h1>Sales</h1>
+          <h1>
+            Sales
+            <span className="titleShimmer" aria-hidden="true" />
+          </h1>
           <div className="muted">
             {totalProfitAllTime == null
               ? `Total profit (all time): $${(0).toFixed(2)}`
@@ -684,7 +959,7 @@ export default function Sales() {
 
       <div className="salesCard">
         <div className="topRow">
-          <h2 style={{ margin: 0 }}>Add Sale</h2>
+          <h2 style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.10)" }}>Add Sale</h2>
           <span className="pillGold">Form profit: ${formProfit.toFixed(2)}</span>
         </div>
 
@@ -735,7 +1010,7 @@ export default function Sales() {
           <div className="label">Note (optional, applies to all lines)</div>
           <input
             className="input"
-            placeholder="Optional note for the whole sale…"
+            placeholder="Optional notes..."
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
@@ -772,21 +1047,31 @@ export default function Sales() {
                   onChange={(e) => setLine(i, { units: Math.max(1, Number(e.target.value || 1)) })}
                 />
 
+                {/* ✅ FIX: allow empty typing so you don't get "0100" */}
                 <input
                   className="input"
                   type="number"
                   min={0}
-                  value={l.price}
-                  onChange={(e) => setLine(i, { price: Math.max(0, Number(e.target.value || 0)) })}
-                  placeholder="Total sale $"
+                  inputMode="decimal"
+                  value={l.price === 0 ? "" : l.price}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setLine(i, { price: v === "" ? 0 : Number(v) });
+                  }}
+                  placeholder="Price Paid"
                 />
 
+                {/* ✅ (recommended) same fix for Fees */}
                 <input
                   className="input"
                   type="number"
                   min={0}
-                  value={l.fees}
-                  onChange={(e) => setLine(i, { fees: Math.max(0, Number(e.target.value || 0)) })}
+                  inputMode="decimal"
+                  value={l.fees === 0 ? "" : l.fees}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setLine(i, { fees: v === "" ? 0 : Number(v) });
+                  }}
                   placeholder="Fees $"
                 />
 
@@ -812,7 +1097,7 @@ export default function Sales() {
 
       <div className="salesCard recentWrap">
         <div className="recentHeader">
-          <h2 style={{ margin: 0 }}>Recent Sales</h2>
+          <h2 style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.14)" }}>Recent Sales</h2>
 
           <div className="filters">
             <div>
@@ -824,7 +1109,7 @@ export default function Sales() {
                 value={year}
                 onChange={(e) => {
                   setYear(e.target.value);
-                  setMonth("All time");
+                  setMonth(ALL_MONTHS);
                   setDay("");
                 }}
               >
@@ -869,6 +1154,7 @@ export default function Sales() {
           <div className="salesTableHead">
             <div>Date</div>
             <div>Client</div>
+            <div>Salesperson</div>
             <div>Item</div>
             <div className="right">Units</div>
             <div className="right">Profit</div>
@@ -885,6 +1171,10 @@ export default function Sales() {
               <div key={r.id} className="salesTableRow">
                 <div data-k="Date">{(r.sale_date ?? r.created_at ?? "").slice(0, 10) || "—"}</div>
                 <div data-k="Client">{r.client_name ?? "—"}</div>
+
+                {/* ✅ NEW COLUMN */}
+                <div data-k="Salesperson">{r.seller_name ?? "—"}</div>
+
                 <div data-k="Item" className="bold">
                   {r.item_name ?? "—"}
                 </div>
