@@ -1,946 +1,1068 @@
-// src/pages/Sales.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { useLocalDraft } from "../hooks/useLocalDraft";
 
-type SaleRow = {
-  id: number;
-  date: string | null; // YYYY-MM-DD
-  item: string | null;
-  units_sold: number | null;
-  profit: number | null;
-  note: string | null;
-  client_id: number | null;
-};
-
-type SaleLine = {
-  item: string;
-  units: number;
-  profit: number;
-};
-
-type ClientRow = {
-  id: number;
-  name: string | null;
-  phone: string | null;
-  email: string | null;
-  last_spoken: string | null; // YYYY-MM-DD
-  notes: string | null;
-};
-
+/** -----------------------------
+ *  Utilities
+ *  ----------------------------- */
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
 function todayISO() {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-
-function toInt(v: any): number {
-  const n = Math.floor(Number(String(v).replace(/[^0-9-]/g, "")));
+function safeNum(v: any) {
+  const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-
-function toNum(v: any): number {
-  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(n) ? n : 0;
+function money(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+function csvEscape(v: any) {
+  const s = String(v ?? "");
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+function downloadTextFile(filename: string, contents: string) {
+  const blob = new Blob([contents], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function makeTempId() {
+  return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-function getYear(iso: string | null) {
-  if (!iso || iso.length < 4) return "";
-  return iso.slice(0, 4);
+/** -----------------------------
+ *  Types
+ *  ----------------------------- */
+type Client = { id: number; name: string | null };
+
+type Seller = { id: number; name: string; active?: boolean | null };
+
+type Item = {
+  id: number;
+  name: string;
+  cost: number; // unit cost
+};
+
+type SaleLineDraft = {
+  tempId: string;
+  item_id: number | null;
+  qty: number;
+  price: number;
+  fees: number;
+};
+
+type SaleHeader = {
+  id: number;
+  sale_date: string | null;
+  notes: string | null;
+  client_id: number | null;
+  seller_id: number | null;
+  created_at?: string | null;
+};
+
+type SaleLineRow = {
+  id: number;
+  sale_id: number;
+  item_id: number;
+  qty: number;
+  price: number;
+  fees: number;
+};
+
+/** -----------------------------
+ *  Table Auto-Detect
+ *  ----------------------------- */
+async function detectFirstWorkingTable(candidates: string[], selectCols: string) {
+  for (const t of candidates) {
+    const res = await supabase.from(t).select(selectCols).limit(1);
+    if (!res.error) return t;
+  }
+  return null;
 }
 
-function getMonth(iso: string | null) {
-  if (!iso || iso.length < 7) return "";
-  return iso.slice(5, 7);
+async function detectSalesHeaderTable() {
+  return detectFirstWorkingTable(["sales", "Sales", "SalesHeader", "sale_headers"], "id,sale_date");
 }
 
-function monthLabel(mm: string) {
-  const mi = Number(mm) - 1;
-  if (!Number.isFinite(mi) || mi < 0 || mi > 11) return mm;
-  const d = new Date(2000, mi, 1);
-  return d.toLocaleString(undefined, { month: "long" });
+async function detectSaleLinesTable() {
+  return detectFirstWorkingTable(
+    ["sale_lines", "Sales", "sales_lines", "sale_items", "sales_items", "line_items"],
+    "id,sale_id,item_id,qty,price,fees"
+  );
 }
 
-function norm(s: any) {
-  return String(s ?? "").trim();
+async function detectSellersTable() {
+  return detectFirstWorkingTable(["sales_people", "sale_sellers", "people", "sellers"], "id,name");
 }
 
+async function loadSellersSafe(tableName: string): Promise<Seller[]> {
+  // Try with active first
+  const withActive = await supabase.from(tableName).select("id,name,active").order("name", { ascending: true });
+  if (!withActive.error) {
+    const raw = ((withActive.data as any) ?? []) as any[];
+    return raw
+      .map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: x.active ?? true }))
+      .filter((x) => x.name.trim().length > 0 && x.active !== false);
+  }
+
+  // Fallback: no active column
+  const noActive = await supabase.from(tableName).select("id,name").order("name", { ascending: true });
+  if (noActive.error) {
+    throw new Error(noActive.error.message);
+  }
+  const raw = ((noActive.data as any) ?? []) as any[];
+  return raw
+    .map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: true }))
+    .filter((x) => x.name.trim().length > 0);
+}
+
+/** -----------------------------
+ *  Component
+ *  ----------------------------- */
 export default function Sales() {
-  const [rows, setRows] = useState<SaleRow[]>([]);
-  const [inventoryItems, setInventoryItems] = useState<string[]>([]);
-  const [clients, setClients] = useState<ClientRow[]>([]);
+  // detected table names
+  const [tSales, setTSales] = useState<string | null>(null);
+  const [tLines, setTLines] = useState<string | null>(null);
+  const [tSellers, setTSellers] = useState<string | null>(null);
+
+  // master data
+  const [clients, setClients] = useState<Client[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
+
+  // add-sale form
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [selectedSellerId, setSelectedSellerId] = useState<number | null>(null);
+  const [saleDate, setSaleDate] = useState<string>(todayISO());
+  const [saleNote, setSaleNote] = useState<string>("");
+
+  const [lines, setLines] = useState<SaleLineDraft[]>([
+    { tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 },
+  ]);
+
+  // sales list
+  const [sales, setSales] = useState<(SaleHeader & { lines: SaleLineRow[] })[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // Filters
-  const [filterYear, setFilterYear] = useState<string>("all");
-  const [filterMonth, setFilterMonth] = useState<string>("all");
+  // filters
+  const now = new Date();
+  const [filterMode, setFilterMode] = useState<"day" | "month" | "year" | "all">("all");
+  const [filterYear, setFilterYear] = useState<number>(now.getFullYear());
+  const [filterMonth, setFilterMonth] = useState<number>(now.getMonth() + 1);
+  const [filterDay, setFilterDay] = useState<number>(now.getDate());
+  const [filterSellerId, setFilterSellerId] = useState<number | "all">("all");
 
-  // Draft autosave
-  const { state: draft, setState: setDraft, clear: clearDraft } = useLocalDraft("dead-inventory:sales:draft", {
-    date: todayISO(),
-    note: "",
-    client_id: null as number | null,
-    lines: [{ item: "", units: 1, profit: 0 }] as SaleLine[],
-  });
+  const itemById = useMemo(() => {
+    const m = new Map<number, Item>();
+    for (const it of items) m.set(it.id, it);
+    return m;
+  }, [items]);
 
-  const date = draft.date as string;
-  const note = (draft.note as string) ?? "";
-  const lines = draft.lines as SaleLine[];
-  const clientId = (draft.client_id as number | null) ?? null;
+  const sellerById = useMemo(() => {
+    const m = new Map<number, Seller>();
+    for (const s of sellers) m.set(s.id, s);
+    return m;
+  }, [sellers]);
 
-  // Client picker state (search)
-  const [clientSearch, setClientSearch] = useState("");
-  const [clientPickerOpen, setClientPickerOpen] = useState(false);
-
-  // Quick add client modal
-  const [clientAddOpen, setClientAddOpen] = useState(false);
-  const [newClientName, setNewClientName] = useState("");
-  const [newClientPhone, setNewClientPhone] = useState("");
-  const [newClientEmail, setNewClientEmail] = useState("");
-  const [newClientLastSpoken, setNewClientLastSpoken] = useState<string>("");
-  const [newClientNotes, setNewClientNotes] = useState("");
-
-  const clientMap = useMemo(() => {
-    const m = new Map<number, ClientRow>();
+  const clientById = useMemo(() => {
+    const m = new Map<number, Client>();
     for (const c of clients) m.set(c.id, c);
     return m;
   }, [clients]);
 
-  const selectedClient = useMemo(() => {
-    if (!clientId) return null;
-    return clientMap.get(clientId) ?? null;
-  }, [clientId, clientMap]);
+  const yearsOptions = useMemo(() => {
+    const yNow = new Date().getFullYear();
+    const ys: number[] = [];
+    for (let y = yNow - 5; y <= yNow + 1; y++) ys.push(y);
+    return ys;
+  }, []);
 
-  const filteredClients = useMemo(() => {
-    const q = norm(clientSearch).toLowerCase();
-    if (!q) return clients.slice(0, 30);
-    const out = clients.filter((c) => {
-      const name = String(c.name ?? "").toLowerCase();
-      const email = String(c.email ?? "").toLowerCase();
-      const phone = String(c.phone ?? "").toLowerCase();
-      return name.includes(q) || email.includes(q) || phone.includes(q);
-    });
-    return out.slice(0, 50);
-  }, [clients, clientSearch]);
+  const daysInMonth = useMemo(() => {
+    const dt = new Date(filterYear, filterMonth, 0);
+    const n = dt.getDate();
+    return Array.from({ length: n }, (_, i) => i + 1);
+  }, [filterYear, filterMonth]);
 
-  async function load() {
+  /** -----------------------------
+   *  Load / Detect on Mount
+   *  ----------------------------- */
+  useEffect(() => {
+    (async () => {
+      setErr("");
+
+      const [salesTable, linesTable, sellersTable] = await Promise.all([
+        detectSalesHeaderTable(),
+        detectSaleLinesTable(),
+        detectSellersTable(),
+      ]);
+
+      setTSales(salesTable);
+      setTLines(linesTable);
+      setTSellers(sellersTable);
+
+      // clients
+      const cRes = await supabase.from("clients").select("id,name").order("name", { ascending: true });
+      if (cRes.error) setErr(`Clients error: ${cRes.error.message}`);
+      setClients(((cRes.data as any) ?? []) as Client[]);
+
+      // items
+      const iRes = await supabase.from("item_catalog").select("id,name,cost").order("name", { ascending: true });
+      if (iRes.error) setErr((e) => e || `Item catalog error: ${iRes.error.message}`);
+      const rawItems = (((iRes.data as any) ?? []) as any[]).map((x) => ({
+        id: Number(x.id),
+        name: String(x.name ?? ""),
+        cost: safeNum(x.cost),
+      }));
+      setItems(rawItems.filter((x) => x.name.trim().length > 0));
+
+      // sellers
+      if (sellersTable) {
+        try {
+          const s = await loadSellersSafe(sellersTable);
+          setSellers(s);
+        } catch (e: any) {
+          setErr((prev) => prev || `Sellers error: ${e?.message ?? String(e)}`);
+          setSellers([]);
+        }
+      } else {
+        setSellers([]);
+      }
+    })();
+  }, []);
+
+  /** -----------------------------
+   *  Line helpers
+   *  ----------------------------- */
+  function addLine() {
+    setLines((prev) => [...prev, { tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 }]);
+  }
+  function removeLine(tempId: string) {
+    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((x) => x.tempId !== tempId)));
+  }
+  function updateLine(tempId: string, patch: Partial<SaleLineDraft>) {
+    setLines((prev) => prev.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
+  }
+
+  const formProfit = useMemo(() => {
+    let total = 0;
+    for (const ln of lines) {
+      if (!ln.item_id) continue;
+      const it = itemById.get(ln.item_id);
+      const unitCost = safeNum(it?.cost);
+      const qty = Math.max(0, safeNum(ln.qty));
+      const price = safeNum(ln.price);
+      const fees = safeNum(ln.fees);
+      total += price - fees - unitCost * qty;
+    }
+    return total;
+  }, [lines, itemById]);
+
+  /** -----------------------------
+   *  Fetch sales list
+   *  ----------------------------- */
+  async function fetchSales() {
+    if (!tSales) return setErr("Could not detect your Sales header table. (Expected column: sale_date)");
+    if (!tLines) return setErr("Could not detect your Sale lines table. (Expected columns: sale_id,item_id,qty,price,fees)");
+
     setLoading(true);
     setErr("");
 
-    const inv = await supabase.from("inventory").select("item").order("item", { ascending: true });
-    if (inv.error) setErr(inv.error.message);
-    setInventoryItems((inv.data ?? []).map((x: any) => x.item));
+    let start: string | null = null;
+    let endExclusive: string | null = null;
 
-    const cl = await supabase
-      .from("clients")
-      .select("id,name,phone,email,last_spoken,notes")
-      .order("name", { ascending: true });
+    if (filterMode === "day") {
+      const y = filterYear,
+        m = filterMonth,
+        d = filterDay;
+      start = `${y}-${pad2(m)}-${pad2(d)}`;
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() + 1);
+      endExclusive = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+    } else if (filterMode === "month") {
+      const y = filterYear,
+        m = filterMonth;
+      start = `${y}-${pad2(m)}-01`;
+      const dt = new Date(y, m - 1, 1);
+      dt.setMonth(dt.getMonth() + 1);
+      endExclusive = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+    } else if (filterMode === "year") {
+      const y = filterYear;
+      start = `${y}-01-01`;
+      endExclusive = `${y + 1}-01-01`;
+    }
 
-    if (cl.error) setErr(cl.error.message);
-    setClients((cl.data as any) ?? []);
+    let q = supabase
+      .from(tSales)
+      .select("id,sale_date,notes,client_id,seller_id,created_at")
+      .order("sale_date", { ascending: false })
+      .limit(500);
 
-    const sales = await supabase
-      .from("Sales")
-      .select("id,date,item,units_sold,profit,note,client_id")
-      .order("date", { ascending: false })
-      .order("id", { ascending: false });
+    if (start) q = q.gte("sale_date", start);
+    if (endExclusive) q = q.lt("sale_date", endExclusive);
+    if (filterSellerId !== "all") q = q.eq("seller_id", filterSellerId);
 
-    if (sales.error) setErr(sales.error.message);
-    setRows((sales.data as any) ?? []);
+    const sRes = await q;
+    if (sRes.error) {
+      setErr(`Sales load error (${tSales}): ${sRes.error.message}`);
+      setSales([]);
+      setLoading(false);
+      return;
+    }
 
+    const headers: SaleHeader[] = ((sRes.data as any) ?? []) as any[];
+    const saleIds = headers.map((x) => x.id);
+
+    let lineRows: SaleLineRow[] = [];
+    if (saleIds.length) {
+      const lRes = await supabase.from(tLines).select("id,sale_id,item_id,qty,price,fees").in("sale_id", saleIds);
+      if (lRes.error) {
+        setErr(`Sale lines load error (${tLines}): ${lRes.error.message}`);
+      } else {
+        lineRows = (((lRes.data as any) ?? []) as any[]).map((x) => ({
+          id: x.id,
+          sale_id: x.sale_id,
+          item_id: x.item_id,
+          qty: safeNum(x.qty),
+          price: safeNum(x.price),
+          fees: safeNum(x.fees),
+        }));
+      }
+    }
+
+    const bySale = new Map<number, SaleLineRow[]>();
+    for (const ln of lineRows) {
+      const arr = bySale.get(ln.sale_id) ?? [];
+      arr.push(ln);
+      bySale.set(ln.sale_id, arr);
+    }
+
+    setSales(headers.map((h) => ({ ...h, lines: bySale.get(h.id) ?? [] })));
     setLoading(false);
   }
 
   useEffect(() => {
-    void load();
-  }, []);
+    if (!tSales || !tLines) return;
+    void fetchSales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tSales, tLines]);
 
-  function addLine() {
-    setDraft((d: any) => ({
-      ...d,
-      lines: [...(d.lines ?? []), { item: "", units: 1, profit: 0 }],
-    }));
-  }
+  /** -----------------------------
+   *  Save sale
+   *  ----------------------------- */
+  async function saveSale() {
+    if (!tSales) return setErr("Could not detect your Sales header table.");
+    if (!tLines) return setErr("Could not detect your Sale lines table.");
 
-  function removeLine(idx: number) {
-    setDraft((d: any) => {
-      const next = [...(d.lines ?? [])];
-      next.splice(idx, 1);
-      return { ...d, lines: next.length ? next : [{ item: "", units: 1, profit: 0 }] };
-    });
-  }
-
-  function updateLine(idx: number, patch: Partial<SaleLine>) {
-    setDraft((d: any) => {
-      const next = [...(d.lines ?? [])];
-      next[idx] = { ...next[idx], ...patch };
-      return { ...d, lines: next };
-    });
-  }
-
-  const formTotalProfit = useMemo(() => {
-    return lines.reduce((sum, ln) => sum + Number(ln.profit ?? 0), 0);
-  }, [lines]);
-
-  async function addSale() {
-    const cleanLines = lines
-      .map((ln) => ({
-        item: String(ln.item ?? "").trim(),
-        units: Math.max(0, Number(ln.units ?? 0)),
-        profit: Number(ln.profit ?? 0),
-      }))
-      .filter((ln) => ln.item && ln.units > 0);
-
-    if (!cleanLines.length) {
-      alert("Add at least one line with an item and units > 0.");
-      return;
-    }
-
+    setSaving(true);
     setErr("");
 
-    const inserts = cleanLines.map((ln) => ({
-      date,
-      item: ln.item,
-      units_sold: ln.units,
-      profit: ln.profit,
-      note: String(note || "").trim() || null,
-      client_id: clientId ?? null,
-    }));
-
-    const { error: insErr } = await supabase.from("Sales").insert(inserts);
-    if (insErr) {
-      setErr(insErr.message);
+    const validLines = lines.filter((l) => l.item_id && safeNum(l.qty) > 0);
+    if (!validLines.length) {
+      setErr("Add at least one item (with qty > 0).");
+      setSaving(false);
       return;
     }
 
-    // deduct inventory per line item
-    for (const ln of cleanLines) {
-      const invRow = await supabase.from("inventory").select("id,qty").eq("item", ln.item).maybeSingle();
+    try {
+      const headerPayload = {
+        sale_date: saleDate,
+        notes: saleNote.trim() ? saleNote.trim() : null,
+        client_id: selectedClientId,
+        seller_id: selectedSellerId,
+      };
 
-      if (invRow.error) {
-        setErr(`Sale saved, but inventory lookup failed for "${ln.item}": ${invRow.error.message}`);
-        continue;
-      }
+      const ins = await supabase.from(tSales).insert([headerPayload]).select("id").single();
+      if (ins.error) throw new Error(ins.error.message);
 
-      if (invRow.data?.id != null) {
-        const currentQty = Number(invRow.data.qty ?? 0);
-        const nextQty = Math.max(0, currentQty - Number(ln.units ?? 0));
-        const upd = await supabase.from("inventory").update({ qty: nextQty }).eq("id", invRow.data.id);
+      const saleId = ins.data.id as number;
 
-        if (upd.error) {
-          setErr(`Sale saved, but inventory could not update for "${ln.item}": ${upd.error.message}`);
-        }
-      } else {
-        setErr(`Sale saved, but no matching inventory item found to deduct for "${ln.item}".`);
-      }
+      const linePayload = validLines.map((l) => ({
+        sale_id: saleId,
+        item_id: l.item_id,
+        qty: safeNum(l.qty),
+        price: safeNum(l.price),
+        fees: safeNum(l.fees),
+      }));
+
+      const lIns = await supabase.from(tLines).insert(linePayload);
+      if (lIns.error) throw new Error(lIns.error.message);
+
+      setSelectedClientId(null);
+      setSelectedSellerId(null);
+      setSaleDate(todayISO());
+      setSaleNote("");
+      setLines([{ tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 }]);
+
+      await fetchSales();
+    } catch (e: any) {
+      setErr(`Save error: ${e?.message ?? String(e)}`);
+    } finally {
+      setSaving(false);
     }
-
-    setDraft({ date: todayISO(), note: "", client_id: null, lines: [{ item: "", units: 1, profit: 0 }] });
-    clearDraft();
-
-    await load();
   }
 
-  async function deleteSale(id: number) {
-    const ok = confirm("Delete this sale entry?");
+  /** -----------------------------
+   *  Delete sale
+   *  ----------------------------- */
+  async function deleteSale(saleId: number) {
+    if (!tSales || !tLines) return;
+
+    const ok = window.confirm("Delete this sale? (Cannot be undone)");
     if (!ok) return;
 
     setErr("");
-    const { error } = await supabase.from("Sales").delete().eq("id", id);
-    if (error) setErr(error.message);
-    await load();
+    try {
+      const dl1 = await supabase.from(tLines).delete().eq("sale_id", saleId);
+      if (dl1.error) throw new Error(dl1.error.message);
+
+      const dl2 = await supabase.from(tSales).delete().eq("id", saleId);
+      if (dl2.error) throw new Error(dl2.error.message);
+
+      await fetchSales();
+    } catch (e: any) {
+      setErr(`Delete error: ${e?.message ?? String(e)}`);
+    }
   }
 
-  const totalProfit = useMemo(() => {
-    return rows.reduce((sum, r) => sum + Number(r.profit ?? 0), 0);
-  }, [rows]);
+  /** -----------------------------
+   *  Compute profit/unit list
+   *  ----------------------------- */
+  const salesWithComputed = useMemo(() => {
+    return sales.map((s) => {
+      let profit = 0;
+      let units = 0;
 
-  const yearOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const list: string[] = [];
-    for (const r of rows) {
-      const y = getYear(r.date);
-      if (!y) continue;
-      if (seen.has(y)) continue;
-      seen.add(y);
-      list.push(y);
-    }
-    return list;
-  }, [rows]);
+      for (const ln of s.lines) {
+        const it = itemById.get(ln.item_id);
+        const unitCost = safeNum(it?.cost);
+        const qty = safeNum(ln.qty);
+        const price = safeNum(ln.price);
+        const fees = safeNum(ln.fees);
+        profit += price - fees - unitCost * qty;
+        units += qty;
+      }
 
-  const monthOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const list: string[] = [];
-    for (const r of rows) {
-      const y = getYear(r.date);
-      const m = getMonth(r.date);
-      if (!m) continue;
-      if (filterYear !== "all" && y !== filterYear) continue;
-      if (seen.has(m)) continue;
-      seen.add(m);
-      list.push(m);
-    }
-    list.sort((a, b) => Number(a) - Number(b));
-    return list;
-  }, [rows, filterYear]);
-
-  useEffect(() => {
-    if (filterMonth === "all") return;
-    if (!monthOptions.includes(filterMonth)) setFilterMonth("all");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterYear, rows]);
-
-  const filteredRows = useMemo(() => {
-    const base = rows.filter((r) => {
-      const y = getYear(r.date);
-      const m = getMonth(r.date);
-      const yearOk = filterYear === "all" ? true : y === filterYear;
-      const monthOk = filterMonth === "all" ? true : m === filterMonth;
-      return yearOk && monthOk;
+      return { ...s, profit, units };
     });
+  }, [sales, itemById]);
 
-    base.sort((a, b) => {
-      const ad = a.date ?? "";
-      const bd = b.date ?? "";
-      if (ad && bd) {
-        if (ad > bd) return -1;
-        if (ad < bd) return 1;
-      } else if (ad && !bd) return -1;
-      else if (!ad && bd) return 1;
+  const loadedProfit = useMemo(() => salesWithComputed.reduce((a, s: any) => a + safeNum(s.profit), 0), [salesWithComputed]);
 
-      const ai = Number(a.id ?? 0);
-      const bi = Number(b.id ?? 0);
-      return bi - ai;
-    });
+  /** -----------------------------
+   *  Export CSV (loaded view)
+   *  ----------------------------- */
+  function exportCSV() {
+    const header = ["Sale Date", "Client", "Seller", "Items", "Units", "Revenue", "Fees", "Cost", "Profit", "Note"];
+    const out: string[] = [header.map(csvEscape).join(",")];
 
-    return base;
-  }, [rows, filterYear, filterMonth]);
+    for (const s of salesWithComputed as any[]) {
+      const clientName = s.client_id ? (clientById.get(s.client_id)?.name ?? "") : "";
+      const sellerName = s.seller_id ? (sellerById.get(s.seller_id)?.name ?? "") : "";
 
-  const filteredTotalProfit = useMemo(() => {
-    return filteredRows.reduce((sum, r) => sum + Number(r.profit ?? 0), 0);
-  }, [filteredRows]);
+      const itemsList = s.lines
+        .map((ln: any) => {
+          const nm = itemById.get(ln.item_id)?.name ?? `Item#${ln.item_id}`;
+          return `${nm} (${safeNum(ln.qty)})`;
+        })
+        .join(" | ");
 
-  const filterLabel = useMemo(() => {
-    if (filterYear === "all" && filterMonth === "all") return "All time";
-    if (filterYear !== "all" && filterMonth === "all") return `Year: ${filterYear}`;
-    if (filterYear === "all" && filterMonth !== "all") return `Month: ${monthLabel(filterMonth)}`;
-    return `${monthLabel(filterMonth)} ${filterYear}`;
-  }, [filterYear, filterMonth]);
+      const revenue = s.lines.reduce((a: number, ln: any) => a + safeNum(ln.price), 0);
+      const fees = s.lines.reduce((a: number, ln: any) => a + safeNum(ln.fees), 0);
+      const cost = s.lines.reduce(
+        (a: number, ln: any) => a + safeNum(itemById.get(ln.item_id)?.cost) * safeNum(ln.qty),
+        0
+      );
 
-  function openClientPicker() {
-    setClientPickerOpen(true);
-    setClientSearch("");
-  }
-
-  function chooseClient(id: number | null) {
-    setDraft((d: any) => ({ ...d, client_id: id }));
-    setClientPickerOpen(false);
-    setClientSearch("");
-  }
-
-  function openQuickAddClient() {
-    setNewClientName("");
-    setNewClientPhone("");
-    setNewClientEmail("");
-    setNewClientLastSpoken("");
-    setNewClientNotes("");
-    setClientAddOpen(true);
-  }
-
-  async function createClientQuick() {
-    setErr("");
-    const payload = {
-      name: norm(newClientName) || null,
-      phone: norm(newClientPhone) || null,
-      email: norm(newClientEmail) || null,
-      last_spoken: norm(newClientLastSpoken) || null,
-      notes: norm(newClientNotes) || null,
-    };
-
-    const { data, error } = await supabase.from("clients").insert([payload]).select("id").maybeSingle();
-    if (error) {
-      setErr(error.message);
-      return;
+      out.push(
+        [
+          s.sale_date ?? "",
+          clientName ?? "",
+          sellerName ?? "",
+          itemsList,
+          s.units ?? 0,
+          revenue,
+          fees,
+          cost,
+          s.profit ?? 0,
+          s.notes ?? "",
+        ]
+          .map(csvEscape)
+          .join(",")
+      );
     }
 
-    await load();
-    const newId = (data as any)?.id ?? null;
-    if (newId) {
-      setDraft((d: any) => ({ ...d, client_id: newId }));
-    }
-    setClientAddOpen(false);
+    let label = "all";
+    if (filterMode === "day") label = `${filterYear}-${pad2(filterMonth)}-${pad2(filterDay)}`;
+    if (filterMode === "month") label = `${filterYear}-${pad2(filterMonth)}`;
+    if (filterMode === "year") label = `${filterYear}`;
+    downloadTextFile(`sales_export_${label}.csv`, out.join("\n"));
   }
 
   return (
-    <div className="page sales2-page">
+    <div className="salesPage">
       <style>{`
-        .sales2-page{ position: relative; isolation: isolate; }
-        .sales2-page:before{
-          content:"";
-          position: fixed;
-          inset: 0;
-          pointer-events: none;
-          z-index: 0;
-          background:
-            radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
-            radial-gradient(560px 420px at 90% 14%, rgba(212,175,55,0.12), transparent 55%),
-            radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
-            linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0.86));
-          opacity: .98;
-        }
-        .sales2-page > *{ position: relative; z-index: 1; }
-
-        .sales2-pill{
-          font-size: 12px;
-          font-weight: 950;
-          padding: 6px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(212,175,55,0.22);
-          background: rgba(212,175,55,0.10);
-          color: rgba(212,175,55,0.95);
-          white-space: nowrap;
-        }
-
-        .sales2-input{
-          padding: 0.46em 0.70em;
-          height: 38px;
-          line-height: 38px;
-          box-sizing: border-box;
-          border-radius: 14px;
-          border: 1px solid rgba(120,160,255,0.18);
-          background: linear-gradient(180deg, rgba(18,30,60,0.62), rgba(10,14,28,0.62));
-          color: rgba(255,255,255,0.92);
-          outline: none;
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), 0 10px 26px rgba(0,0,0,0.22);
-        }
-        .sales2-input:focus{
-          border-color: rgba(212,175,55,0.36);
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), 0 0 0 3px rgba(212,175,55,0.10), 0 14px 34px rgba(0,0,0,0.28);
-        }
-        select.sales2-input option{
-          background: #070a14 !important;
-          color: #ffffff !important;
-        }
-
-        .sales2-clientChip{
-          display:flex;
-          gap: 10px;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 12px;
-          border-radius: 16px;
-          border: 1px solid rgba(120,160,255,0.16);
-          background: radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.08), transparent 60%),
-                      radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.06), transparent 60%),
-                      rgba(0,0,0,0.42);
-          backdrop-filter: blur(12px);
-          box-shadow: 0 22px 70px rgba(0,0,0,0.35);
-        }
-
-        .sales2-overlay{
-          position: fixed; inset:0;
-          background: rgba(0,0,0,0.74);
-          display:flex; align-items:center; justify-content:center;
-          padding:14px;
-          z-index: 60;
-        }
-        .sales2-modal{
-          width: min(760px, 100%);
+        .salesPage{
           padding: 14px;
-          border-radius: 18px;
-          border: 1px solid rgba(120,160,255,0.16);
-          background: radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%),
-                      radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.08), transparent 60%),
-                      rgba(8,10,18,0.88);
-          box-shadow: 0 24px 70px rgba(0,0,0,0.48);
-          backdrop-filter: blur(12px);
+          max-width: 1200px;
+          margin: 0 auto;
+          color: rgba(255,255,255,0.92);
         }
-        .sales2-modalGrid{
+
+        .topRow{
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+          margin-bottom:12px;
+        }
+        .title{
+          font-size: 28px;
+          font-weight: 950;
+          letter-spacing: .2px;
+          margin: 0;
+        }
+        .sub{
+          opacity:.85;
+          margin-top:6px;
+          font-size: 14px;
+        }
+
+        .btn{
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(20,20,28,.55);
+          color:#fff;
+          padding:10px 14px;
+          border-radius:14px;
+          font-weight:900;
+          cursor:pointer;
+          white-space:nowrap;
+        }
+        .btn:active{ transform: scale(.99); }
+        .btnPrimary{
+          background: rgba(118, 68, 255, .18);
+          border-color: rgba(130, 90, 255, .35);
+        }
+        .btnDanger{
+          background: rgba(255, 80, 80, .12);
+          border-color: rgba(255, 80, 80, .28);
+        }
+
+        .pill{
+          display:inline-flex;
+          align-items:center;
+          gap:8px;
+          padding:6px 10px;
+          border-radius:999px;
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.18);
+          font-size: 12px;
+          font-weight:950;
+          color: #ffd77a;
+        }
+
+        .card{
+          border:1px solid rgba(255,255,255,.10);
+          background: linear-gradient(180deg, rgba(18,18,28,.72), rgba(10,10,16,.72));
+          border-radius: 18px;
+          padding: 14px;
+          box-shadow: 0 10px 40px rgba(0,0,0,.35);
+          backdrop-filter: blur(10px);
+        }
+        .cardHeader{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+          margin-bottom: 10px;
+        }
+        .cardTitle{
+          font-size: 18px;
+          font-weight: 950;
+          margin: 0;
+        }
+
+        .grid{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .row2{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
+        .field label{
+          display:block;
+          font-size:12px;
+          opacity:.85;
+          margin-bottom:6px;
+          font-weight:950;
+        }
+
+        .input, .select{
+          width:100%;
+          border-radius: 16px;
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(10,10,18,.55);
+          color:#fff;
+          padding: 12px 12px;
+          outline:none;
+          font-weight:900;
+          line-height: 1.1;
+          height: 46px;
+          font-size: 16px; /* iOS zoom fix */
+        }
+
+        .muted{
+          opacity:.75;
+          font-size:12px;
+          margin-top:6px;
+        }
+
+        .lines{
+          margin-top: 12px;
+          display:flex;
+          flex-direction:column;
+          gap:10px;
+        }
+        .line{
+          border:1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.16);
+          border-radius: 16px;
+          padding: 10px;
           display:grid;
           grid-template-columns: 1fr 1fr;
-          gap: 12px;
-          margin-top: 12px;
+          gap:10px;
+          align-items:end;
         }
-        @media (max-width: 780px){
-          .sales2-modalGrid{ grid-template-columns: 1fr; }
+        .line .itemField{ grid-column: 1 / -1; }
+        .line .feesField{ grid-column: 1 / 2; }
+        .line .removeField{ grid-column: 2 / 3; display:flex; justify-content:flex-end; }
+        .xBtn{
+          width:46px;
+          height:46px;
+          border-radius: 16px;
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.22);
+          color:#fff;
+          font-size:20px;
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+        .profitMini{
+          margin-top: 6px;
+          font-size: 12px;
+          opacity: .85;
+          font-weight: 950;
+        }
+
+        .bottomActions{
+          display:flex;
+          gap:10px;
+          flex-wrap:wrap;
+          margin-top: 10px;
+        }
+
+        .filters{
+          display:flex;
+          gap:10px;
+          flex-wrap:wrap;
+          align-items:flex-end;
+        }
+        .seg{
+          display:flex;
+          gap:8px;
+          flex-wrap:wrap;
+        }
+        .seg button{
+          padding:8px 12px;
+          border-radius: 999px;
+          border:1px solid rgba(255,255,255,.12);
+          background: rgba(0,0,0,.18);
+          color:#fff;
+          font-weight:950;
+          cursor:pointer;
+        }
+        .seg button.active{
+          border-color: rgba(130, 90, 255, .45);
+          background: rgba(118, 68, 255, .20);
+        }
+
+        .tableWrap{
+          overflow:auto;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(0,0,0,.10);
+        }
+        table{
+          width:100%;
+          border-collapse: collapse;
+          min-width: 860px;
+        }
+        th, td{
+          padding: 12px;
+          text-align:left;
+          border-bottom: 1px solid rgba(255,255,255,.08);
+          vertical-align: top;
+          font-weight: 900;
+        }
+        th{
+          font-size: 12px;
+          opacity: .85;
+          font-weight: 950;
+        }
+        td{
+          font-size: 14px;
+        }
+
+        @media (min-width: 820px){
+          .row2{ grid-template-columns: 1fr 1fr; }
+          .line{
+            grid-template-columns: 1.25fr .55fr .75fr .75fr auto;
+            align-items:end;
+          }
+          .line .itemField{ grid-column: auto; }
+          .line .feesField{ grid-column: auto; }
+          .line .removeField{ grid-column: auto; }
         }
       `}</style>
 
-      <div className="row" style={{ alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Sales</h1>
-        <button className="btn" onClick={() => void load()} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
+      <div className="topRow">
+        <div>
+          <h1 className="title">Sales</h1>
+          <div className="sub">
+            Loaded profit: <b>{money(loadedProfit)}</b>
+          </div>
+          <div className="muted" style={{ marginTop: 6 }}>
+            Tables → items: <b>item_catalog</b>, sales: <b>{tSales ?? "detecting..."}</b>, lines:{" "}
+            <b>{tLines ?? "detecting..."}</b>, sellers: <b>{tSellers ?? "detecting..."}</b>
+          </div>
+        </div>
+
+        <button className="btn" onClick={fetchSales} disabled={loading}>
+          {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
-      <p className="muted" style={{ marginTop: 8 }}>
-        Total profit (all time): <b>${totalProfit.toFixed(2)}</b>
-      </p>
-
       {err ? (
-        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
-          <b style={{ color: "salmon" }}>Error:</b> {err}
+        <div className="card" style={{ borderColor: "rgba(255,80,80,.35)", marginBottom: 12 }}>
+          <b style={{ color: "#ff9a9a" }}>Error:</b> <span style={{ opacity: 0.9 }}>{err}</span>
         </div>
       ) : null}
 
-      <div className="card" style={{ padding: 12, marginTop: 12 }}>
-        <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Add Sale</h2>
-            <span className="sales2-pill">Form profit: ${formTotalProfit.toFixed(2)}</span>
+      <div className="card">
+        <div className="cardHeader">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h2 className="cardTitle">Add Sale</h2>
+            <span className="pill">Form profit: {money(formProfit)}</span>
           </div>
         </div>
 
-        {/* Client selector (optional) */}
-        <div style={{ marginTop: 10 }}>
-          <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-            Client (optional)
+        <div className="grid">
+          <div className="field">
+            <label>Client (optional)</label>
+            <select
+              className="select"
+              value={selectedClientId ?? ""}
+              onChange={(e) => setSelectedClientId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">No client selected</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name ?? "Unnamed client"}
+                </option>
+              ))}
+            </select>
+            <div className="muted">Clients come from your Clients page/table.</div>
           </div>
 
-          <div className="sales2-clientChip">
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)", lineHeight: 1.15 }}>
-                {selectedClient?.name?.trim()
-                  ? selectedClient.name
-                  : selectedClient
-                  ? `Client #${selectedClient.id}`
-                  : "No client selected"}
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {selectedClient
-                  ? [selectedClient.email, selectedClient.phone].filter(Boolean).join(" • ") || "No contact details"
-                  : "Tag a client to this sale (searchable)."}
-              </div>
+          <div className="row2">
+            <div className="field">
+              <label>Date</label>
+              <input className="input" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
             </div>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button className="btn" type="button" onClick={openClientPicker}>
-                {selectedClient ? "Change" : "Select"}
-              </button>
-              {selectedClient ? (
-                <button className="btn" type="button" onClick={() => chooseClient(null)}>
-                  Clear
-                </button>
-              ) : null}
-              <button className="btn primary" type="button" onClick={openQuickAddClient}>
-                + New Client
-              </button>
+            <div className="field">
+              <label>Salesperson (optional)</label>
+              <select
+                className="select"
+                value={selectedSellerId ?? ""}
+                onChange={(e) => setSelectedSellerId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">No salesperson selected</option>
+                {sellers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <div className="muted">Sellers auto-detected from sales_people / sale_sellers.</div>
             </div>
           </div>
-        </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 10, marginTop: 12 }}>
-          <div style={{ gridColumn: "span 4" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-              Date
-            </div>
+          <div className="field">
+            <label>Note (optional, applies to all lines)</label>
             <input
-              className="sales2-input"
-              type="date"
-              value={date}
-              onChange={(e) => setDraft((d: any) => ({ ...d, date: e.target.value }))}
-              style={{ width: "100%" }}
-            />
-          </div>
-
-          <div style={{ gridColumn: "span 8" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-              Note (optional, applies to all lines)
-            </div>
-            <input
-              className="sales2-input"
-              value={note}
-              onChange={(e) => setDraft((d: any) => ({ ...d, note: e.target.value }))}
-              style={{ width: "100%" }}
+              className="input"
               placeholder="Optional note for the whole sale..."
+              value={saleNote}
+              onChange={(e) => setSaleNote(e.target.value)}
             />
           </div>
 
-          <div style={{ gridColumn: "span 12" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-              Items
-            </div>
+          <div className="lines">
+            {lines.map((ln) => {
+              const it = ln.item_id ? itemById.get(ln.item_id) : null;
+              const unitCost = safeNum(it?.cost);
+              const qty = Math.max(0, safeNum(ln.qty));
+              const price = safeNum(ln.price);
+              const fees = safeNum(ln.fees);
+              const profit = ln.item_id ? price - fees - unitCost * qty : 0;
 
-            <div style={{ display: "grid", gap: 10 }}>
-              {lines.map((ln, idx) => (
-                <div
-                  key={idx}
-                  className="card"
-                  style={{
-                    padding: 12,
-                    borderColor: "rgba(120,160,255,0.14)",
-                    background: "rgba(0,0,0,0.35)",
-                    display: "grid",
-                    gridTemplateColumns: "4fr 2fr 2fr auto",
-                    gap: 10,
-                    alignItems: "center",
-                    borderRadius: 18,
-                  }}
-                >
-                  <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-                      Item
-                    </div>
+              return (
+                <div className="line" key={ln.tempId}>
+                  <div className="field itemField">
+                    <label>Item</label>
                     <select
-                      className="sales2-input"
-                      value={ln.item}
-                      onChange={(e) => updateLine(idx, { item: e.target.value })}
-                      style={{ width: "100%" }}
+                      className="select"
+                      value={ln.item_id ?? ""}
+                      onChange={(e) =>
+                        updateLine(ln.tempId, { item_id: e.target.value ? Number(e.target.value) : null })
+                      }
                     >
-                      <option value="">Select…</option>
-                      {inventoryItems.map((it) => (
-                        <option key={it} value={it}>
-                          {it}
+                      <option value="">Select...</option>
+                      {items.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name}
                         </option>
                       ))}
                     </select>
+                    <div className="muted">
+                      Cost: <b>{money(unitCost)}</b> (from item_catalog)
+                    </div>
                   </div>
 
-                  <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-                      Units
-                    </div>
+                  <div className="field">
+                    <label>Units</label>
                     <input
-                      className="sales2-input"
-                      value={ln.units}
-                      onChange={(e) => updateLine(idx, { units: toInt(e.target.value) })}
-                      style={{ width: "100%" }}
+                      className="input"
+                      inputMode="numeric"
+                      value={ln.qty}
+                      onChange={(e) => updateLine(ln.tempId, { qty: safeNum(e.target.value) })}
                     />
                   </div>
 
-                  <div>
-                    <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-                      Profit ($)
-                    </div>
+                  <div className="field">
+                    <label>Total price ($)</label>
                     <input
-                      className="sales2-input"
-                      value={ln.profit}
-                      onChange={(e) => updateLine(idx, { profit: toNum(e.target.value) })}
-                      style={{ width: "100%" }}
+                      className="input"
+                      inputMode="decimal"
+                      value={ln.price}
+                      onChange={(e) => updateLine(ln.tempId, { price: safeNum(e.target.value) })}
                     />
                   </div>
 
-                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                    <button className="btn" type="button" onClick={() => removeLine(idx)} title="Remove line">
-                      ✕
+                  <div className="field feesField">
+                    <label>Fees ($)</label>
+                    <input
+                      className="input"
+                      inputMode="decimal"
+                      value={ln.fees}
+                      onChange={(e) => updateLine(ln.tempId, { fees: safeNum(e.target.value) })}
+                    />
+                    <div className="profitMini">
+                      Line profit: <b>{money(profit)}</b>
+                    </div>
+                  </div>
+
+                  <div className="removeField">
+                    <button className="xBtn" onClick={() => removeLine(ln.tempId)} title="Remove line">
+                      ×
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
 
-            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="btn" type="button" onClick={addLine}>
+            <div className="bottomActions">
+              <button className="btn" onClick={addLine}>
                 + Add line
               </button>
-              <button className="btn primary" type="button" onClick={() => void addSale()}>
-                Save Sale
+              <button className="btn btnPrimary" onClick={saveSale} disabled={saving}>
+                {saving ? "Saving..." : "Save Sale"}
               </button>
             </div>
           </div>
         </div>
-
-        <style>{`
-          @media (max-width: 760px) {
-            .sales2-page .card > div[style*="grid-template-columns: repeat(12"] {
-              grid-template-columns: repeat(6, 1fr) !important;
-            }
-            .sales2-page .card > div[style*="grid-template-columns: repeat(12"] > div {
-              grid-column: span 6 !important;
-            }
-            .sales2-page .card .card[style*="grid-template-columns: 4fr"]{
-              grid-template-columns: 1fr !important;
-            }
-          }
-        `}</style>
       </div>
 
-      <div className="card" style={{ padding: 12, marginTop: 12 }}>
-        <div className="row" style={{ alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <h2 style={{ marginTop: 0 }}>Recent Sales</h2>
+      <div className="card" style={{ marginTop: 14 }}>
+        <div className="cardHeader">
+          <div>
+            <h2 className="cardTitle" style={{ marginBottom: 4 }}>
+              Recent Sales
+            </h2>
+            <div className="muted">Filter by Day / Month / Year. Export what you’re viewing.</div>
+          </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-              Year
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <span className="pill">Loaded profit: {money(loadedProfit)}</span>
+            <button className="btn" onClick={exportCSV} disabled={loading}>
+              Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div className="filters" style={{ marginBottom: 12 }}>
+          <div>
+            <div className="muted" style={{ marginBottom: 6, fontWeight: 950 }}>
+              Range
             </div>
-            <select
-              className="sales2-input"
-              value={filterYear}
-              onChange={(e) => setFilterYear(e.target.value)}
-              style={{ minWidth: 140 }}
-            >
-              <option value="all">All</option>
-              {yearOptions.map((y) => (
+            <div className="seg">
+              <button className={filterMode === "all" ? "active" : ""} onClick={() => setFilterMode("all")}>
+                All
+              </button>
+              <button className={filterMode === "day" ? "active" : ""} onClick={() => setFilterMode("day")}>
+                Day
+              </button>
+              <button className={filterMode === "month" ? "active" : ""} onClick={() => setFilterMode("month")}>
+                Month
+              </button>
+              <button className={filterMode === "year" ? "active" : ""} onClick={() => setFilterMode("year")}>
+                Year
+              </button>
+            </div>
+          </div>
+
+          <div className="field" style={{ minWidth: 140 }}>
+            <label>Year</label>
+            <select className="select" value={filterYear} onChange={(e) => setFilterYear(Number(e.target.value))}>
+              {yearsOptions.map((y) => (
                 <option key={y} value={y}>
                   {y}
                 </option>
               ))}
             </select>
+          </div>
 
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-              Month
+          {filterMode === "day" || filterMode === "month" ? (
+            <div className="field" style={{ minWidth: 160 }}>
+              <label>Month</label>
+              <select className="select" value={filterMonth} onChange={(e) => setFilterMonth(Number(e.target.value))}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {pad2(m)}
+                  </option>
+                ))}
+              </select>
             </div>
+          ) : null}
+
+          {filterMode === "day" ? (
+            <div className="field" style={{ minWidth: 140 }}>
+              <label>Day</label>
+              <select className="select" value={filterDay} onChange={(e) => setFilterDay(Number(e.target.value))}>
+                {daysInMonth.map((d) => (
+                  <option key={d} value={d}>
+                    {pad2(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          <div className="field" style={{ minWidth: 220 }}>
+            <label>Salesperson</label>
             <select
-              className="sales2-input"
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              style={{ minWidth: 170 }}
+              className="select"
+              value={filterSellerId}
+              onChange={(e) => setFilterSellerId(e.target.value === "all" ? "all" : Number(e.target.value))}
             >
               <option value="all">All</option>
-              {monthOptions.map((m) => (
-                <option key={m} value={m}>
-                  {monthLabel(m)}
+              {sellers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
                 </option>
               ))}
             </select>
-
-            <button
-              className="btn"
-              type="button"
-              onClick={() => {
-                setFilterYear("all");
-                setFilterMonth("all");
-              }}
-              disabled={filterYear === "all" && filterMonth === "all"}
-            >
-              All
-            </button>
-
-            <div className="muted" style={{ fontSize: 13 }}>
-              {filterLabel} profit: <b>${filteredTotalProfit.toFixed(2)}</b>
-            </div>
           </div>
+
+          <button className="btn btnPrimary" onClick={fetchSales} disabled={loading}>
+            {loading ? "Loading..." : "Apply"}
+          </button>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+        <div className="tableWrap">
+          <table>
             <thead>
               <tr>
-                {["Date", "Client", "Item", "Units", "Profit", "Note", "Actions"].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      textAlign: "left",
-                      padding: 10,
-                      borderBottom: "1px solid rgba(255,255,255,0.10)",
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                      letterSpacing: 0.3,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
+                <th>Date</th>
+                <th>Client</th>
+                <th>Seller</th>
+                <th>Items</th>
+                <th>Units</th>
+                <th>Profit</th>
+                <th>Note</th>
+                <th style={{ width: 120 }}>Actions</th>
               </tr>
             </thead>
-
             <tbody>
-              {filteredRows.map((r) => {
-                const c = r.client_id ? clientMap.get(r.client_id) : null;
-                const cname = c?.name?.trim() ? c.name : r.client_id ? `Client #${r.client_id}` : "";
-                const csub = c ? [c.email, c.phone].filter(Boolean).join(" • ") : "";
-
-                return (
-                  <tr key={r.id}>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{r.date ?? ""}</td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                      {cname ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                          <b style={{ color: "rgba(255,255,255,0.92)" }}>{cname}</b>
-                          <span className="muted" style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {csub || "—"}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                      <b>{r.item ?? ""}</b>
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>{Number(r.units_sold ?? 0)}</td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                      ${Number(r.profit ?? 0).toFixed(2)}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                      <span className="muted">{r.note ?? ""}</span>
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                      <button className="btn" onClick={() => void deleteSale(r.id)}>
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {!filteredRows.length ? (
+              {salesWithComputed.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: 14 }} className="muted">
-                    No sales yet.
+                  <td colSpan={8} style={{ opacity: 0.8 }}>
+                    {loading ? "Loading..." : "No sales found for this filter."}
                   </td>
                 </tr>
-              ) : null}
+              ) : (
+                (salesWithComputed as any[]).map((s) => {
+                  const clientName = s.client_id ? clientById.get(s.client_id)?.name ?? "—" : "—";
+                  const sellerName = s.seller_id ? sellerById.get(s.seller_id)?.name ?? "—" : "—";
+
+                  const itemsText =
+                    s.lines
+                      .map((ln: any) => `${itemById.get(ln.item_id)?.name ?? `Item#${ln.item_id}`} (${safeNum(ln.qty)})`)
+                      .join(", ") || "—";
+
+                  return (
+                    <tr key={s.id}>
+                      <td>{s.sale_date ?? "—"}</td>
+                      <td>{clientName ?? "—"}</td>
+                      <td>{sellerName ?? "—"}</td>
+                      <td style={{ maxWidth: 420 }}>{itemsText}</td>
+                      <td>{s.units ?? 0}</td>
+                      <td>{money(s.profit ?? 0)}</td>
+                      <td style={{ maxWidth: 240 }}>{s.notes ?? "—"}</td>
+                      <td>
+                        <button className="btn btnDanger" onClick={() => deleteSale(s.id)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
+
+        <div className="muted" style={{ marginTop: 10 }}>
+          Export downloads exactly what you’re filtered to.
+        </div>
       </div>
-
-      {/* Client Picker */}
-      {clientPickerOpen ? (
-        <div className="sales2-overlay" onClick={() => setClientPickerOpen(false)}>
-          <div className="sales2-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ alignItems: "center" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <h2 style={{ margin: 0 }}>Select Client</h2>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Search by name, email, or phone.
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button className="btn" type="button" onClick={() => chooseClient(null)}>
-                  Clear
-                </button>
-                <button className="btn" type="button" onClick={() => setClientPickerOpen(false)}>
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <input
-                className="sales2-input"
-                value={clientSearch}
-                onChange={(e) => setClientSearch(e.target.value)}
-                placeholder="Search clients..."
-                style={{ width: "100%" }}
-                autoFocus
-              />
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 10, maxHeight: 420, overflow: "auto", paddingRight: 2 }}>
-              {filteredClients.map((c) => {
-                const title = c?.name?.trim() ? c.name : `Client #${c.id}`;
-                const sub = [c.email, c.phone].filter(Boolean).join(" • ") || "No contact details";
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="btn"
-                    onClick={() => chooseClient(c.id)}
-                    style={{
-                      textAlign: "left",
-                      padding: 12,
-                      borderRadius: 16,
-                      border: "1px solid rgba(120,160,255,0.16)",
-                      background:
-                        "radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%), rgba(0,0,0,0.38)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)" }}>{title}</div>
-                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-                      {sub}
-                    </div>
-                  </button>
-                );
-              })}
-
-              {!filteredClients.length ? (
-                <div className="muted" style={{ padding: 10 }}>
-                  No matches. You can create a new client.
-                </div>
-              ) : null}
-            </div>
-
-            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="btn primary" type="button" onClick={openQuickAddClient}>
-                + New Client
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Quick Add Client */}
-      {clientAddOpen ? (
-        <div className="sales2-overlay" onClick={() => setClientAddOpen(false)}>
-          <div className="sales2-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row" style={{ alignItems: "center" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <h2 style={{ margin: 0 }}>New Client</h2>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Nothing is required — save whatever you have.
-                </div>
-              </div>
-              <button className="btn" type="button" onClick={() => setClientAddOpen(false)}>
-                Close
-              </button>
-            </div>
-
-            <div className="sales2-modalGrid">
-              <div>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                  Name
-                </div>
-                <input className="sales2-input" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} style={{ width: "100%" }} />
-              </div>
-
-              <div>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                  Phone
-                </div>
-                <input className="sales2-input" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} style={{ width: "100%" }} />
-              </div>
-
-              <div>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                  Email
-                </div>
-                <input className="sales2-input" value={newClientEmail} onChange={(e) => setNewClientEmail(e.target.value)} style={{ width: "100%" }} />
-              </div>
-
-              <div>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                  Last spoken (optional)
-                </div>
-                <input
-                  className="sales2-input"
-                  type="date"
-                  value={newClientLastSpoken}
-                  onChange={(e) => setNewClientLastSpoken(e.target.value)}
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-                  Notes (optional)
-                </div>
-                <input
-                  className="sales2-input"
-                  value={newClientNotes}
-                  onChange={(e) => setNewClientNotes(e.target.value)}
-                  style={{ width: "100%" }}
-                  placeholder="Anything you want to remember about them..."
-                />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="btn primary" type="button" onClick={() => void createClientQuick()}>
-                Save Client
-              </button>
-              <button className="btn" type="button" onClick={() => setClientAddOpen(false)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

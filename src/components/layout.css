@@ -1,3 +1,20 @@
+/* src/components/layout.css */
+
+/* =========================
+   Sticky header support
+   ========================= */
+html, body, #root{
+  height: 100%;
+}
+
+body{
+  margin: 0;
+  overflow-x: hidden;
+}
+
+/* =========================
+   Dream Room - Cloudy Purple Theme
+   ========================= */
 :root{
   --bg0: #07070b;
   --glass: rgba(255,255,255,0.06);
@@ -120,9 +137,12 @@
   justify-content: space-between;
   gap: 14px;
   padding: 12px 14px;
+
   position: sticky;
   top: 0;
-  z-index: 999;
+  left: 0;
+  right: 0;
+  z-index: 9999;
 
   background: rgba(10,10,16,0.78);
   backdrop-filter: blur(12px);
@@ -284,7 +304,12 @@ select.input optgroup{
   .ad-tab{ padding: 9px 12px; font-size: 12px; }
   input.input, select.input, textarea.input { font-size: 16px; }
 }
+
 /* ============ Event Calendar: stronger "has event" highlight ============ */
+/* NOTE: Your CalendarPage uses .day and .daynum and .dot
+   If you want these styles to actually apply, make CalendarPage
+   use: className="day cal-day ..." and rename dot -> eventDot, daynum -> cal-num
+   OR keep these as-is and use the alternative block below. */
 
 .cal-day.hasEvent{
   border-color: rgba(var(--violet), 0.55) !important;
@@ -309,7 +334,6 @@ select.input optgroup{
     0 0 22px rgba(var(--pink), 0.14) !important;
 }
 
-/* The dot indicator */
 .cal-day .eventDot{
   width: 10px;
   height: 10px;
@@ -321,8 +345,47 @@ select.input optgroup{
     0 0 10px rgba(var(--pink), 0.28);
 }
 
-/* Optional: make the date number pop when it has an event */
 .cal-day.hasEvent .cal-num{
   color: rgba(255,255,255,0.98);
   text-shadow: 0 0 18px rgba(var(--violet), 0.35);
+}
+
+/* ✅ Alternative: APPLY TO YOUR CURRENT CalendarPage (uses .day .daynum .dot) */
+.day.hasEvent{
+  border-color: rgba(var(--violet), 0.62) !important;
+  background:
+    radial-gradient(120px 80px at 30% 30%, rgba(var(--violet), 0.42), transparent 60%),
+    radial-gradient(120px 80px at 70% 70%, rgba(var(--pink), 0.26), transparent 62%),
+    rgba(255,255,255,0.04) !important;
+
+  box-shadow:
+    0 0 0 1px rgba(var(--violet), 0.26) inset,
+    0 18px 44px rgba(var(--violet), 0.22),
+    0 0 30px rgba(var(--violet), 0.30),
+    0 0 22px rgba(var(--pink), 0.14) !important;
+}
+
+.day.hasEvent:hover{
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgba(var(--violet), 0.30) inset,
+    0 22px 56px rgba(var(--violet), 0.26),
+    0 0 38px rgba(var(--violet), 0.36),
+    0 0 26px rgba(var(--pink), 0.18) !important;
+}
+
+.day .dot{
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(var(--violet), 0.98);
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,0.45),
+    0 0 18px rgba(var(--violet), 0.60),
+    0 0 12px rgba(var(--pink), 0.32);
+}
+
+.day.hasEvent .daynum{
+  color: rgba(255,255,255,0.98);
+  text-shadow: 0 0 18px rgba(var(--violet), 0.40);
 }

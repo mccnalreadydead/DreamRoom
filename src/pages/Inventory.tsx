@@ -1,3 +1,4 @@
+// src/pages/Inventory.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
@@ -43,6 +44,9 @@ export default function Inventory() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
+  // mobile search/filter
+  const [q, setQ] = useState("");
+
   // always-latest rows for autosave reads
   const rowsRef = useRef<InventoryRow[]>([]);
   useEffect(() => {
@@ -54,12 +58,15 @@ export default function Inventory() {
   const [savingIds, setSavingIds] = useState<Record<number, boolean>>({});
   const [dirtyIds, setDirtyIds] = useState<Record<number, boolean>>({});
 
-  // Add Item modal
+  // Add Item sheet
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
   const [addQty, setAddQty] = useState(0);
   const [addCost, setAddCost] = useState(0);
   const [addResell, setAddResell] = useState(0);
+
+  // Action menu
+  const [menuForId, setMenuForId] = useState<number | null>(null);
 
   async function loadInventory(type: InvType) {
     const { data, error } = await supabase
@@ -111,14 +118,13 @@ export default function Inventory() {
   }
 
   async function upsertCatalogItem(name: string) {
+    // insert, ignore duplicates
     const { error } = await supabase.from("item_catalog").insert([{ name, category: "Accessories" }]);
-
     if (error) {
       const msg = String(error.message || "").toLowerCase();
       const isDup = msg.includes("duplicate") || msg.includes("unique");
       if (!isDup) throw error;
     }
-
     await loadCatalog();
   }
 
@@ -136,7 +142,6 @@ export default function Inventory() {
       const { error: insErr } = await supabase
         .from("inventory")
         .insert([{ item: itemName, qty: 0, unit_cost: 0, resale_price: 0, inv_type: type }]);
-
       if (insErr) throw insErr;
 
       await loadInventory(type);
@@ -179,7 +184,6 @@ export default function Inventory() {
 
   function scheduleAutoSave(id: number) {
     setDirtyIds((p) => ({ ...p, [id]: true }));
-
     const prev = timersRef.current[id];
     if (prev) window.clearTimeout(prev);
 
@@ -244,9 +248,7 @@ export default function Inventory() {
 
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === "hidden") {
-        void flushPendingSaves();
-      }
+      if (document.visibilityState === "hidden") void flushPendingSaves();
     };
     window.addEventListener("visibilitychange", onVis);
 
@@ -258,57 +260,16 @@ export default function Inventory() {
   }, [dirtyIds]);
 
   async function deleteRow(id: number) {
-  const ok = confirm("Delete this inventory item?");
-  if (!ok) return;
+    const ok = confirm("Delete this inventory item?");
+    if (!ok) return;
 
-  setErr("");
-  setLoading(true);
+    setErr("");
+    const { error } = await supabase.from("inventory").delete().eq("id", id);
+    if (error) setErr(error.message);
 
-  try {
-    // find the row so we know the item name
-    const row = rowsRef.current.find((x) => x.id === id);
-    const itemName = row?.item;
-
-    // ✅ instantly remove from UI so dropdown refreshes right away
-    setRows((prev) => prev.filter((x) => x.id !== id));
-
-    // delete from inventory
-    const delInv = await supabase.from("inventory").delete().eq("id", id);
-    if (delInv.error) throw delInv.error;
-
-    // OPTIONAL: if you want "delete means delete everywhere"
-    if (itemName) {
-      // only delete from item_catalog if it's not used in ANY inventory row (D or C)
-      const check = await supabase
-        .from("inventory")
-        .select("id")
-        .eq("item", itemName)
-        .limit(1);
-
-      if (check.error) throw check.error;
-
-      const stillUsed = (check.data ?? []).length > 0;
-
-      if (!stillUsed) {
-        // remove from catalog
-        const delCat = await supabase.from("item_catalog").delete().eq("name", itemName);
-        if (delCat.error) throw delCat.error;
-
-        // also remove locally so dropdown updates immediately
-        setCatalog((prev) => prev.filter((c) => normKey(c.name) !== normKey(itemName)));
-      }
-    }
-
-    // reload to stay perfectly synced
-    await loadAll(invType);
-  } catch (e: any) {
-    setErr(e?.message ?? String(e));
-    // if something fails, re-sync from server
-    await loadAll(invType);
-  } finally {
-    setLoading(false);
+    setMenuForId(null);
+    await loadInventory(invType);
   }
-}
 
   async function bumpQty(id: number, delta: number) {
     const r = rowsRef.current.find((x) => x.id === id);
@@ -318,6 +279,7 @@ export default function Inventory() {
     await saveRowById(id);
   }
 
+  // unique dropdown options
   const options = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -331,6 +293,15 @@ export default function Inventory() {
     return out;
   }, [catalog]);
 
+  const filteredRows = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter((r) => {
+      const hay = `${r.item ?? ""}`.toLowerCase();
+      return hay.includes(s);
+    });
+  }, [rows, q]);
+
   const totalResaleValue = useMemo(() => {
     return rows.reduce(
       (sum, r) => sum + Math.max(0, Number(r.qty ?? 0)) * Math.max(0, Number(r.resale_price ?? 0)),
@@ -338,13 +309,22 @@ export default function Inventory() {
     );
   }, [rows]);
 
-  const tabTitle = invType === "D" ? "Devan's-Inventory" : "Chad's-Inventory";
+  const tabTitle = invType === "D" ? "Devan’s Inventory" : "Chad’s Inventory";
 
   return (
-    <div className="page inv2-page">
+    <div className="page invM-page">
       <style>{`
-        .inv2-page{ position: relative; isolation: isolate; }
-        .inv2-page:before{
+        /* =======================
+           MOBILE-FIRST INVENTORY UI
+           iPhone safe-area friendly
+           ======================= */
+
+        .invM-page{
+          position: relative;
+          isolation: isolate;
+          padding-bottom: calc(92px + env(safe-area-inset-bottom)); /* room for bottom bar */
+        }
+        .invM-page:before{
           content:"";
           position: fixed;
           inset: 0;
@@ -352,50 +332,50 @@ export default function Inventory() {
           z-index: 0;
           background:
             radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
-            radial-gradient(560px 420px at 90% 14%, rgba(212,175,55,0.12), transparent 55%),
+            radial-gradient(560px 420px at 90% 14%, rgba(212,175,55,0.10), transparent 55%),
             radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
-            linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0.86));
+            linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.88));
           opacity: .98;
         }
-        .inv2-page > *{ position: relative; z-index: 1; }
+        .invM-page > *{ position: relative; z-index: 1; }
 
-        .inv2-top{ justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .inv2-topBtns{ display:flex; gap:10px; flex-wrap: wrap; }
-
-        .inv2-tabs{
+        /* Header block */
+        .invM-head{
           display:flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .invM-topRow{
+          display:flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .invM-title{
+          display:flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .invM-title h1{
+          margin: 0;
+          font-size: 18px;
+          letter-spacing: 0.2px;
+        }
+
+        .invM-kpi{
+          display:flex;
+          align-items:center;
           gap: 10px;
           flex-wrap: wrap;
-          align-items:center;
-          margin-bottom: 10px;
         }
-        .inv2-tabBtn{
-          padding: 10px 14px;
-          border-radius: 999px;
-          border: 1px solid rgba(120,160,255,0.22);
-          background: linear-gradient(180deg, rgba(18,30,60,0.55), rgba(10,14,28,0.55));
-          color: rgba(255,255,255,0.86);
-          font-weight: 950;
-          letter-spacing: 0.2px;
-          box-shadow: 0 10px 28px rgba(0,0,0,0.25);
-          transition: transform .08s ease, border-color .12s ease, filter .12s ease;
-          user-select: none;
-        }
-        .inv2-tabBtn:hover{ filter: brightness(1.05); }
-        .inv2-tabBtn:active{ transform: translateY(1px); }
-        .inv2-tabBtnActive{
-          border-color: rgba(212,175,55,0.34);
-          box-shadow: 0 14px 40px rgba(0,0,0,0.30);
-          background:
-            radial-gradient(520px 120px at 20% 0%, rgba(212,175,55,0.16), transparent 60%),
-            linear-gradient(180deg, rgba(22,34,70,0.72), rgba(10,14,28,0.62));
-          color: rgba(255,255,255,0.92);
-        }
-
-        .inv2-pill{
+        .invM-pill{
           font-size: 12px;
           font-weight: 950;
-          padding: 6px 10px;
+          padding: 7px 10px;
           border-radius: 999px;
           border: 1px solid rgba(212,175,55,0.22);
           background: rgba(212,175,55,0.10);
@@ -403,200 +383,479 @@ export default function Inventory() {
           white-space: nowrap;
         }
 
-        .inv2-card{
-          margin-top: 12px;
-          padding: 12px;
+        /* Segmented control */
+        .invM-seg{
+          display:flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .invM-seg button{
+          border-radius: 999px;
+          border: 1px solid rgba(120,160,255,0.18);
+          background: rgba(255,255,255,0.04);
+          color: rgba(255,255,255,0.88);
+          padding: 10px 12px;
+          font-weight: 950;
+          letter-spacing: 0.2px;
+          cursor: pointer;
+        }
+        .invM-seg button.active{
+          border-color: rgba(152,90,255,0.40);
+          background: linear-gradient(180deg, rgba(152,90,255,0.20), rgba(255,255,255,0.03));
+          box-shadow: 0 12px 30px rgba(0,0,0,0.26);
+        }
+
+        /* Search bar */
+        .invM-search{
+          display:flex;
+          gap: 10px;
+          align-items:center;
+        }
+        .invM-search .input{
+          height: 44px; /* thumb-friendly */
+          border-radius: 16px;
+        }
+
+        /* Cards list */
+        .invM-list{
+          display:flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .invM-card{
           border-radius: 18px;
-          border: 1px solid rgba(120,160,255,0.16);
+          border: 1px solid rgba(120,160,255,0.14);
           background:
             radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.08), transparent 60%),
             radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.06), transparent 60%),
             rgba(0,0,0,0.42);
           backdrop-filter: blur(12px);
           box-shadow: 0 22px 70px rgba(0,0,0,0.35);
+          padding: 12px;
         }
 
-        .inv2-tableWrap{ overflow-x: hidden; margin-top: 6px; }
-        .inv2-table{ width:100%; border-collapse: collapse; table-layout: fixed; }
-        .inv2-table th, .inv2-table td { overflow: hidden; text-overflow: ellipsis; }
-
-        @media (max-width: 980px){
-          .inv2-tableWrap{ overflow-x:auto; }
-          .inv2-table{ min-width: 940px; table-layout: auto; }
-          select.inv2-input, input.inv2-input { font-size: 16px; } /* iOS zoom fix */
+        .invM-rowTop{
+          display:flex;
+          align-items:flex-start;
+          justify-content: space-between;
+          gap: 10px;
         }
 
-        .inv2-table th{
-          text-align:left;
-          padding: 8px 8px;
-          border-bottom: 1px solid rgba(255,255,255,0.10);
-          color: rgba(255,255,255,0.72);
-          font-size: 11px;
-          letter-spacing: 0.38px;
+        .invM-itemCol{
+          flex: 1 1 auto;
+          min-width: 0;
+          display:flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .invM-itemLabel{
+          font-size: 12px;
           font-weight: 950;
+          color: rgba(255,255,255,0.68);
+          letter-spacing: 0.2px;
+        }
+
+        .invM-select{
+          height: 46px;
+          border-radius: 16px;
+          font-weight: 950;
+        }
+
+        .invM-actions{
+          flex: 0 0 auto;
+          display:flex;
+          flex-direction: column;
+          align-items:flex-end;
+          gap: 8px;
+        }
+
+        .invM-kebab{
+          width: 42px;
+          height: 42px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.05);
+          color: rgba(255,255,255,0.92);
+          font-weight: 950;
+          cursor: pointer;
+        }
+        .invM-statusPill{
+          font-size: 11px;
+          font-weight: 950;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.04);
+          color: rgba(255,255,255,0.70);
           white-space: nowrap;
         }
-        .inv2-table td{
-          padding: 8px 8px;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-          vertical-align: middle;
+
+        .invM-statusPill.low{
+          border-color: rgba(255,80,80,0.30);
+          background: rgba(255,80,80,0.10);
+          color: rgba(255,160,160,0.95);
         }
 
-        /* Make inputs match the rest of your app: dark blue glass, white text */
-        .inv2-input{
-          padding: 0.46em 0.70em;
-          height: 38px;
-          line-height: 38px;
-          box-sizing: border-box;
-          border-radius: 14px;
-          border: 1px solid rgba(120,160,255,0.18);
-          background:
-            linear-gradient(180deg, rgba(18,30,60,0.62), rgba(10,14,28,0.62));
-          color: rgba(255,255,255,0.92);
-          outline: none;
-          box-shadow:
-            inset 0 0 0 1px rgba(255,255,255,0.03),
-            0 10px 26px rgba(0,0,0,0.22);
-        }
-        .inv2-input:focus{
-          border-color: rgba(212,175,55,0.36);
-          box-shadow:
-            inset 0 0 0 1px rgba(255,255,255,0.03),
-            0 0 0 3px rgba(212,175,55,0.10),
-            0 14px 34px rgba(0,0,0,0.28);
-        }
-
-        /* Dropdown readability */
-        .inv2-select{ color: rgba(255,255,255,0.92); }
-        .inv2-select option, .inv2-select optgroup{
-          background: #070a14 !important;
-          color: #ffffff !important;
-        }
-
-        /* Prevent wrapping + reserve space for save pill */
-        .inv2-itemRow{
+        /* Qty big +/- */
+        .invM-qtyRow{
           display:flex;
-          gap:10px;
-          flex-wrap: nowrap;
+          align-items:center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .invM-qtyBlock{
+          display:flex;
+          align-items:center;
+          gap: 10px;
+        }
+
+        .invM-qtyBtn{
+          width: 52px;
+          height: 46px;
+          border-radius: 16px;
+          border: 1px solid rgba(152,90,255,0.26);
+          background: rgba(152,90,255,0.12);
+          color: rgba(255,255,255,0.92);
+          font-weight: 950;
+          font-size: 18px;
+          cursor: pointer;
+        }
+        .invM-qtyBtn:active{ transform: translateY(1px); }
+
+        .invM-qtyInput{
+          width: 92px;
+          height: 46px;
+          border-radius: 16px;
+          text-align: center;
+          font-weight: 950;
+          font-size: 16px;
+        }
+
+        /* Compact cost/resale */
+        .invM-moneyRow{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-top: 10px;
+        }
+        .invM-fieldLabel{
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(255,255,255,0.66);
+          margin-bottom: 6px;
+        }
+        .invM-moneyInput{
+          height: 46px;
+          border-radius: 16px;
+          font-weight: 950;
+        }
+
+        /* Mini menu */
+        .invM-menu{
+          position: absolute;
+          right: 0;
+          top: 48px;
+          min-width: 160px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(10,10,16,0.82);
+          backdrop-filter: blur(12px);
+          box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+          overflow: hidden;
+          z-index: 50;
+        }
+        .invM-menu button{
+          width: 100%;
+          text-align: left;
+          padding: 12px 12px;
+          border: 0;
+          background: transparent;
+          color: rgba(255,255,255,0.90);
+          font-weight: 950;
+          cursor: pointer;
+        }
+        .invM-menu button:hover{
+          background: rgba(255,255,255,0.06);
+        }
+        .invM-menu .danger{
+          color: rgba(255,160,160,0.95);
+        }
+
+        /* Bottom action bar (always reachable) */
+        .invM-bottomBar{
+          position: fixed;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 120;
+          padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+          background: rgba(10,10,16,0.78);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border-top: 1px solid rgba(255,255,255,0.10);
+        }
+        .invM-bottomInner{
+          max-width: 980px;
+          margin: 0 auto;
+          display:flex;
+          gap: 10px;
           align-items:center;
         }
-        .inv2-select{ flex: 1 1 auto; min-width: 200px; }
-
-        .inv2-saveState{
-          width: 86px;
-          text-align: center;
-          font-size: 11px;
-          font-weight: 950;
-          padding: 5px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(120,160,255,0.16);
-          background:
-            linear-gradient(180deg, rgba(18,30,60,0.50), rgba(10,14,28,0.50));
-          color: rgba(255,255,255,0.72);
-          white-space: nowrap;
-          flex: 0 0 auto;
-          box-shadow: 0 10px 26px rgba(0,0,0,0.20);
+        .invM-bottomInner .btn{
+          height: 46px;
+          border-radius: 16px;
+          width: 100%;
         }
 
-        .inv2-qtyWrap{ display:flex; gap: 8px; align-items:center; }
-        .inv2-plus{
-          padding: 0.48em 0.85em;
-          height: 38px;
-          border-radius: 14px;
-          font-weight: 950;
-          border: 1px solid rgba(212,175,55,0.22);
-          background:
-            radial-gradient(420px 120px at 20% 0%, rgba(212,175,55,0.16), transparent 55%),
-            linear-gradient(180deg, rgba(18,30,60,0.55), rgba(10,14,28,0.55));
-          box-shadow: 0 12px 28px rgba(0,0,0,0.22);
+        /* Add item as bottom sheet */
+        .invM-overlay{
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.72);
+          display:flex;
+          align-items:flex-end;
+          justify-content:center;
+          padding: 10px;
+          z-index: 200;
         }
-
-        .inv2-qty{ width: 86px; }
-        .inv2-money{ width: 110px; }
-
-        .inv2-lowPill{
-          font-size: 11px;
-          font-weight: 950;
-          padding: 5px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,80,80,0.30);
-          background: rgba(255,80,80,0.10);
-          color: rgba(255,140,140,0.95);
-          white-space: nowrap;
-        }
-        .inv2-okPill{
-          font-size: 11px;
-          font-weight: 950;
-          padding: 5px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(212,175,55,0.22);
-          background: rgba(212,175,55,0.10);
-          color: rgba(212,175,55,0.92);
-          white-space: nowrap;
-        }
-
-        /* Modal */
-        .inv2-overlay{
-          position: fixed; inset:0;
-          background: rgba(0,0,0,0.74);
-          display:flex; align-items:center; justify-content:center;
-          padding:14px;
-          z-index: 60;
-        }
-        .inv2-modal{
-          width: min(740px, 100%);
-          padding: 14px;
-          border-radius: 18px;
+        .invM-sheet{
+          width: min(980px, 100%);
+          border-radius: 22px;
           border: 1px solid rgba(120,160,255,0.16);
           background:
             radial-gradient(900px 220px at 30% 0%, rgba(90,140,255,0.10), transparent 60%),
             radial-gradient(680px 220px at 85% 0%, rgba(212,175,55,0.08), transparent 60%),
-            rgba(8,10,18,0.88);
-          box-shadow: 0 24px 70px rgba(0,0,0,0.48);
+            rgba(8,10,18,0.92);
+          box-shadow: 0 24px 70px rgba(0,0,0,0.55);
           backdrop-filter: blur(12px);
+          padding: 14px;
+          padding-bottom: calc(14px + env(safe-area-inset-bottom));
         }
-        .inv2-modalGrid{
+        .invM-sheet h2{ margin: 0; font-size: 16px; }
+        .invM-sheetGrid{
           display:grid;
           grid-template-columns: 1fr 1fr;
-          gap: 12px;
+          gap: 10px;
           margin-top: 12px;
         }
-        .inv2-label{
-          font-size: 12px;
+        .invM-sheetGrid .full{ grid-column: 1 / -1; }
+        .invM-sheet .input{
+          height: 46px;
+          border-radius: 16px;
           font-weight: 950;
-          color: rgba(255,255,255,0.68);
-          margin-bottom: 6px;
+          font-size: 16px;
         }
-        @media (max-width: 780px){
-          .inv2-modalGrid{ grid-template-columns: 1fr; }
+        .invM-sheet textarea.input{
+          min-height: 110px;
         }
+        @media (max-width: 520px){
+          .invM-sheetGrid{ grid-template-columns: 1fr; }
+        }
+
+        /* Desktop/table fallback (optional) */
+        .invM-desktopTable{ display:none; }
+
+        @media (min-width: 980px){
+          .invM-page{
+            padding-bottom: calc(88px + env(safe-area-inset-bottom));
+          }
+        }
+
+        /* Reduce accidental zoom on iOS */
+        input, select, textarea { font-size: 16px; }
       `}</style>
 
-      <div className="inv2-tabs">
-        <button
-          type="button"
-          className={`inv2-tabBtn ${invType === "D" ? "inv2-tabBtnActive" : ""}`}
-          onClick={() => setInvType("D")}
-        >
-          Devans-Inventory
-        </button>
-        <button
-          type="button"
-          className={`inv2-tabBtn ${invType === "C" ? "inv2-tabBtnActive" : ""}`}
-          onClick={() => setInvType("C")}
-        >
-          Chads-Inventory
-        </button>
-      </div>
+      <div className="invM-head">
+        <div className="invM-topRow">
+          <div className="invM-title">
+            <h1>{tabTitle}</h1>
+            <div className="invM-kpi">
+              <span className="invM-pill">Total Resale: {money(totalResaleValue)}</span>
+              {loading ? <span className="muted">Loading…</span> : null}
+            </div>
+          </div>
 
-      <div className="row inv2-top">
-        <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0 }}>{tabTitle}</h1>
-          <span className="inv2-pill">Total Resale Value: {money(totalResaleValue)}</span>
+          <div className="invM-seg" aria-label="Inventory selector">
+            <button type="button" className={invType === "D" ? "active" : ""} onClick={() => setInvType("D")}>
+              Devan
+            </button>
+            <button type="button" className={invType === "C" ? "active" : ""} onClick={() => setInvType("C")}>
+              Chad
+            </button>
+          </div>
         </div>
 
-        <div className="inv2-topBtns">
-          <button className="btn" type="button" onClick={openAdd}>
+        <div className="invM-search">
+          <input
+            className="input"
+            placeholder="Search items…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+
+        {err ? (
+          <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
+            <b style={{ color: "salmon" }}>Error:</b> {err}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="invM-list">
+        {filteredRows.map((r) => {
+          const low = Number(r.qty ?? 0) < 1;
+          const isSaving = !!savingIds[r.id];
+          const isDirty = !!dirtyIds[r.id];
+
+          // keep dropdown unique: don't show r.item twice
+          const dropdown = options.filter((x) => normKey(x) !== normKey(r.item));
+
+          return (
+            <div className="invM-card" key={r.id}>
+              <div className="invM-rowTop">
+                <div className="invM-itemCol">
+                  <div className="invM-itemLabel">Item</div>
+
+                  <select
+                    className="input invM-select"
+                    value={r.item}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "__ADD_NEW__") {
+                        openAdd();
+                        return;
+                      }
+                      updateRowLocal(r.id, { item: v });
+                    }}
+                    onBlur={() => void saveRowById(r.id)}
+                  >
+                    <option value={r.item}>{r.item}</option>
+                    {dropdown.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Add new item…</option>
+                  </select>
+                </div>
+
+                <div className="invM-actions" style={{ position: "relative" }}>
+                  <button
+                    className="invM-kebab"
+                    type="button"
+                    onClick={() => setMenuForId((p) => (p === r.id ? null : r.id))}
+                    aria-label="Row menu"
+                  >
+                    ⋯
+                  </button>
+
+                  <div className={`invM-statusPill ${low ? "low" : ""}`}>
+                    {isSaving ? "Saving…" : isDirty ? "Edited" : low ? "Low" : "OK"}
+                  </div>
+
+                  {menuForId === r.id ? (
+                    <div className="invM-menu" role="menu">
+                      <button type="button" onClick={() => { void saveRowById(r.id); setMenuForId(null); }}>
+                        Save now
+                      </button>
+                      <button type="button" className="danger" onClick={() => void deleteRow(r.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="invM-qtyRow">
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div className="invM-itemLabel">Qty</div>
+                  <div className="invM-qtyBlock">
+                    <button className="invM-qtyBtn" type="button" onClick={() => void bumpQty(r.id, -1)}>
+                      –
+                    </button>
+                    <input
+                      className="input invM-qtyInput"
+                      inputMode="numeric"
+                      value={r.qty ?? 0}
+                      onChange={(e) => updateRowLocal(r.id, { qty: toNum(e.target.value, 0) })}
+                      onBlur={() => void saveRowById(r.id)}
+                      style={{
+                        borderColor: low ? "rgba(255,80,80,0.45)" : undefined,
+                        color: low ? "rgba(255,170,170,1)" : undefined,
+                      }}
+                    />
+                    <button className="invM-qtyBtn" type="button" onClick={() => void bumpQty(r.id, 1)}>
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "right" }}>
+                  <div className="invM-itemLabel">Quick</div>
+                  <button className="btn" type="button" onClick={() => void bumpQty(r.id, 5)} style={{ height: 46, borderRadius: 16 }}>
+                    +5
+                  </button>
+                </div>
+              </div>
+
+              <div className="invM-moneyRow">
+                <div>
+                  <div className="invM-fieldLabel">Cost</div>
+                  <input
+                    className="input invM-moneyInput"
+                    inputMode="decimal"
+                    value={r.unit_cost ?? 0}
+                    onChange={(e) => updateRowLocal(r.id, { unit_cost: toNum(e.target.value, 0) })}
+                    onBlur={() => void saveRowById(r.id)}
+                  />
+                </div>
+
+                <div>
+                  <div className="invM-fieldLabel">Resale</div>
+                  <input
+                    className="input invM-moneyInput"
+                    inputMode="decimal"
+                    value={r.resale_price ?? 0}
+                    onChange={(e) => updateRowLocal(r.id, { resale_price: toNum(e.target.value, 0) })}
+                    onBlur={() => void saveRowById(r.id)}
+                  />
+                </div>
+              </div>
+
+              <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+                Value:{" "}
+                <b style={{ color: "rgba(255,255,255,0.90)" }}>
+                  {money(Math.max(0, Number(r.qty ?? 0)) * Math.max(0, Number(r.resale_price ?? 0)))}
+                </b>
+              </div>
+            </div>
+          );
+        })}
+
+        {!filteredRows.length ? (
+          <div className="card" style={{ padding: 12 }}>
+            <div className="muted">
+              No items match your search.
+              <div style={{ marginTop: 8 }}>
+                <button className="btn" type="button" onClick={openAdd}>
+                  + Add Item
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Bottom bar (always visible, perfect for phone) */}
+      <div className="invM-bottomBar">
+        <div className="invM-bottomInner">
+          <button className="btn primary" type="button" onClick={openAdd}>
             + Add Item
           </button>
           <button className="btn" type="button" onClick={() => void loadAll(invType)} disabled={loading}>
@@ -605,157 +864,39 @@ export default function Inventory() {
         </div>
       </div>
 
-      {err ? (
-        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)", marginTop: 12 }}>
-          <b style={{ color: "salmon" }}>Error:</b> {err}
-        </div>
-      ) : null}
-
-      <div className="card inv2-card">
-        <div className="inv2-tableWrap">
-          <table className="inv2-table">
-            <thead>
-              <tr>
-                {["Item", "Qty", "Cost", "Resell", "Status", "Actions"].map((h) => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((r) => {
-                const low = Number(r.qty ?? 0) < 1;
-                const isSaving = !!savingIds[r.id];
-                const isDirty = !!dirtyIds[r.id];
-
-                return (
-                  <tr key={r.id}>
-                    <td>
-                      <div className="inv2-itemRow">
-                        <select
-                          className="inv2-input inv2-select"
-                          value={r.item}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "__ADD_NEW__") {
-                              openAdd();
-                              return;
-                            }
-                            updateRowLocal(r.id, { item: v });
-                          }}
-                          onBlur={() => void saveRowById(r.id)}
-                        >
-                          <option value={r.item}>{r.item}</option>
-
-                          {options.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-
-                          <option value="__ADD_NEW__">+ Add new item…</option>
-                        </select>
-
-                        <span
-                          className="inv2-saveState"
-                          style={{ opacity: isSaving || isDirty ? 1 : 0, pointerEvents: "none" }}
-                        >
-                          {isSaving ? "Saving…" : isDirty ? "Edited" : "Saved"}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td>
-                      <div className="inv2-qtyWrap">
-                        <input
-                          className="inv2-input inv2-qty"
-                          style={{
-                            borderColor: low ? "rgba(255,80,80,0.55)" : undefined,
-                            color: low ? "rgba(255,140,140,1)" : undefined,
-                            fontWeight: 950,
-                          }}
-                          value={r.qty ?? 0}
-                          onChange={(e) => updateRowLocal(r.id, { qty: toNum(e.target.value, 0) })}
-                          onBlur={() => void saveRowById(r.id)}
-                        />
-                        <button className="btn inv2-plus" type="button" onClick={() => void bumpQty(r.id, 1)}>
-                          +
-                        </button>
-                      </div>
-                    </td>
-
-                    <td>
-                      <input
-                        className="inv2-input inv2-money"
-                        value={r.unit_cost ?? 0}
-                        onChange={(e) => updateRowLocal(r.id, { unit_cost: toNum(e.target.value, 0) })}
-                        onBlur={() => void saveRowById(r.id)}
-                      />
-                    </td>
-
-                    <td>
-                      <input
-                        className="inv2-input inv2-money"
-                        value={r.resale_price ?? 0}
-                        onChange={(e) => updateRowLocal(r.id, { resale_price: toNum(e.target.value, 0) })}
-                        onBlur={() => void saveRowById(r.id)}
-                      />
-                    </td>
-
-                    <td>{low ? <span className="inv2-lowPill">Low</span> : <span className="inv2-okPill">OK</span>}</td>
-
-                    <td>
-                      <button className="btn" type="button" onClick={() => void deleteRow(r.id)}>
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {!rows.length ? (
-                <tr>
-                  <td colSpan={6} className="muted" style={{ padding: 12 }}>
-                    No items yet in {tabTitle}. Click “Add Item” to create your first one.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+      {/* Add Item Bottom Sheet */}
       {addOpen ? (
-        <div className="inv2-overlay" onClick={closeAdd}>
-          <div className="inv2-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="invM-overlay" onClick={closeAdd}>
+          <div className="invM-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ alignItems: "center" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <h2 style={{ margin: 0 }}>Add Item</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <h2>Add Item</h2>
                 <div className="muted" style={{ fontSize: 12 }}>
-                  Adds to <b>{tabTitle}</b> and your dropdown catalog.
+                  This adds it to your dropdown catalog and to <b>{tabTitle}</b>.
                 </div>
               </div>
 
-              <button className="btn" type="button" onClick={closeAdd}>
+              <button className="btn" type="button" onClick={closeAdd} style={{ height: 46, borderRadius: 16 }}>
                 Close
               </button>
             </div>
 
-            <div className="inv2-modalGrid">
-              <div>
-                <div className="inv2-label">Name</div>
+            <div className="invM-sheetGrid">
+              <div className="full">
+                <div className="invM-fieldLabel">Name</div>
                 <input
-                  className="inv2-input"
+                  className="input"
                   value={addName}
                   onChange={(e) => setAddName(e.target.value)}
-                  placeholder="Example: Charger, Part, Product name..."
+                  placeholder="Example: SM7B, Cable, Stand..."
+                  autoFocus
                 />
               </div>
 
               <div>
-                <div className="inv2-label">Starting Qty</div>
+                <div className="invM-fieldLabel">Starting Qty</div>
                 <input
-                  className="inv2-input"
+                  className="input"
                   type="number"
                   min={0}
                   value={addQty}
@@ -764,9 +905,9 @@ export default function Inventory() {
               </div>
 
               <div>
-                <div className="inv2-label">Unit Cost</div>
+                <div className="invM-fieldLabel">Unit Cost</div>
                 <input
-                  className="inv2-input"
+                  className="input"
                   type="number"
                   min={0}
                   value={addCost}
@@ -775,9 +916,9 @@ export default function Inventory() {
               </div>
 
               <div>
-                <div className="inv2-label">Resale Price</div>
+                <div className="invM-fieldLabel">Resale Price</div>
                 <input
-                  className="inv2-input"
+                  className="input"
                   type="number"
                   min={0}
                   value={addResell}
@@ -787,17 +928,17 @@ export default function Inventory() {
             </div>
 
             <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="btn primary" type="button" onClick={() => void addItemSubmit()}>
-                Create Item
+              <button className="btn primary" type="button" onClick={() => void addItemSubmit()} disabled={loading}>
+                {loading ? "Creating…" : "Create Item"}
               </button>
-              <button className="btn" type="button" onClick={closeAdd}>
+              <button className="btn" type="button" onClick={closeAdd} disabled={loading}>
                 Cancel
               </button>
             </div>
 
-            <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-              Pro tip: You can also select “+ Add new item…” from the dropdown.
-            </p>
+            <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+              Tip: If you can’t see the keyboard / fields on iPhone, scroll inside this sheet — it’s built to stay on-screen.
+            </div>
           </div>
         </div>
       ) : null}

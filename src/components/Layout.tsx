@@ -1,3 +1,4 @@
+// src/components/Layout.tsx
 import { NavLink, Outlet } from "react-router-dom";
 import "./layout.css";
 
@@ -5,10 +6,11 @@ const tabs = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/inventory", label: "Inventory" },
   { to: "/sales", label: "Sales" },
+  { to: "/sales-metrics", label: "Sales Metrics" }, // ✅ NEW TAB
   { to: "/tracking", label: "Tracking" },
-  { to: "/calendar", label: "Event Calendar" }, // ✅ renamed
+  { to: "/calendar", label: "Event Calendar" },
   { to: "/clients", label: "Clients" },
-  { to: "/new-product", label: "Product List & Price" },
+  { to: "/new-product", label: "Product List" }, // ✅ renamed from "Product List & Price"
 ];
 
 export default function Layout() {
@@ -20,10 +22,11 @@ export default function Layout() {
       <div className="dream-fog" aria-hidden="true" />
       <div className="dream-particles" aria-hidden="true" />
 
+      {/* ✅ Sticky topbar (stays on top while you scroll) */}
       <header className="ad-topbar dreamy-topbar">
         <div className="ad-brand">
-          <div className="ad-brandTitle">☁ Dream Room ☁️</div>
-          <div className="ad-brandSub">Soft, dreamy inventory & sales tracking ✨</div>
+          <div className="ad-brandTitle">☁️ Welcome To The Dream ☁️</div>
+          <div className="ad-brandSub">✨✨✨✨✨✨✨✨</div>
         </div>
 
         <nav className="ad-tabs" aria-label="Primary navigation">
