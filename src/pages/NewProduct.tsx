@@ -56,9 +56,7 @@ export default function NewProduct() {
   const stats = useMemo(() => {
     const count = products.length;
     const avgMargin =
-      count === 0
-        ? 0
-        : products.reduce((s, p) => s + (p.resell - p.wholesale), 0) / count;
+      count === 0 ? 0 : products.reduce((s, p) => s + (p.resell - p.wholesale), 0) / count;
     return { count, avgMargin };
   }, [products]);
 
@@ -95,35 +93,100 @@ export default function NewProduct() {
   }
 
   return (
-    <div className="page">
+    <div className="page npM">
+      <style>{`
+        /* MOBILE-FIRST */
+        .npM-wrap{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 14px;
+          margin-top: 14px;
+          align-items:start;
+        }
+
+        /* Desktop can become 2 columns */
+        @media (min-width: 980px){
+          .npM-wrap{
+            grid-template-columns: 420px 1fr;
+          }
+        }
+
+        /* Make the form feel vertical + clean */
+        .npM-form .input{
+          height: 46px;
+          border-radius: 16px;
+          font-weight: 900;
+        }
+
+        .npM-two{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+          margin-top: 10px;
+        }
+        @media (min-width: 520px){
+          .npM-two{ grid-template-columns: 1fr 1fr; }
+        }
+
+        /* KPI cards stack nicely on mobile */
+        .npM-kpis{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        @media (min-width: 620px){
+          .npM-kpis{ grid-template-columns: 1fr 1fr 1fr; }
+        }
+
+        /* Table should scroll horizontally if needed */
+        .npM-tableWrap{
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          border-radius: 16px;
+        }
+
+        /* Make delete button smaller on mobile */
+        .npM-delBtn{
+          height: 38px;
+          border-radius: 14px;
+        }
+      `}</style>
+
       <div className="row">
         <h1 style={{ margin: 0 }}>Product List</h1>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "420px 1fr",
-          gap: 14,
-          marginTop: 14,
-          alignItems: "start",
-        }}
-      >
-        {/* LEFT: FORM */}
-        <div className="card" style={{ padding: 16 }}>
+      <div className="npM-wrap">
+        {/* FORM (TOP ON MOBILE) */}
+        <div className="card npM-form" style={{ padding: 16 }}>
           <h2 style={{ marginTop: 0 }}>Add Product</h2>
 
           <label className="label">Product name</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="SM7B Replica" />
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="SM7B Replica"
+          />
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+          <div className="npM-two">
             <div>
               <label className="label">Wholesale ($)</label>
-              <input className="input" value={wholesale} onChange={(e) => setWholesale(e.target.value)} placeholder="180" />
+              <input
+                className="input"
+                value={wholesale}
+                onChange={(e) => setWholesale(e.target.value)}
+                placeholder="180"
+              />
             </div>
             <div>
               <label className="label">Resell ($)</label>
-              <input className="input" value={resell} onChange={(e) => setResell(e.target.value)} placeholder="260" />
+              <input
+                className="input"
+                value={resell}
+                onChange={(e) => setResell(e.target.value)}
+                placeholder="260"
+              />
             </div>
           </div>
 
@@ -138,16 +201,18 @@ export default function NewProduct() {
           </p>
         </div>
 
-        {/* RIGHT: LIST */}
-        <div className="card">
-          <div className="grid3">
+        {/* STATS + LIST (BELOW FORM ON MOBILE) */}
+        <div className="card" style={{ padding: 14 }}>
+          <div className="npM-kpis">
             <div className="card" style={{ margin: 0 }}>
               <div className="kpiLabel">Products</div>
               <div className="kpiValue">{stats.count}</div>
             </div>
             <div className="card" style={{ margin: 0 }}>
               <div className="kpiLabel">Avg Margin</div>
-              <div className="kpiValue">${stats.avgMargin.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              <div className="kpiValue">
+                ${stats.avgMargin.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </div>
             </div>
             <div className="card" style={{ margin: 0 }}>
               <div className="kpiLabel">Storage Key</div>
@@ -162,7 +227,7 @@ export default function NewProduct() {
           {products.length === 0 ? (
             <p className="muted">No products added yet.</p>
           ) : (
-            <div className="tableWrap">
+            <div className="npM-tableWrap">
               <table className="table">
                 <thead>
                   <tr>
@@ -181,7 +246,7 @@ export default function NewProduct() {
                       <td>${p.resell.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                       <td>${(p.resell - p.wholesale).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                       <td>
-                        <button className="btn" onClick={() => removeProduct(p.id)}>
+                        <button className="btn npM-delBtn" onClick={() => removeProduct(p.id)}>
                           Delete
                         </button>
                       </td>

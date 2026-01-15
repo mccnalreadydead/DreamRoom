@@ -1,141 +1,147 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-function safeNum(v: any) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function money(n: number) {
-  const v = Number.isFinite(n) ? n : 0;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
-}
-function csvEscape(v: any) {
-  const s = String(v ?? "");
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-function downloadTextFile(filename: string, contents: string) {
-  const blob = new Blob([contents], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+/**
+ * This page is MOBILE-FIRST.
+ * It:
+ * - loads sellers (sales_people OR sale_sellers OR sellers)
+ * - loads sales rows from "sales"
+ * - tries to also load sale line-items if a table exists
+ * - calculates:
+ *    total profit, total sales, fees, avg selling price per sale,
+ *    avg items per sale (best-effort via sale_lines; fallback=1 per sale)
+ * - filters by Seller + Month + Year
+ * - allows adding a salesperson (bottom sheet)
+ *
+ * Requested changes:
+ * - DO NOT change layout/behavior
+ * - ONLY: show nicknames in dropdown for Chad/Devan (display labels)
+ * - Add cool effects (visual only) + gothic/vampiric "Sales Metrics" title
+ * - Do not change anything that affects table performance
+ */
 
-type Seller = { id: number; name: string; active?: boolean | null };
-type Item = { id: number; name: string; cost: number };
-
-type SaleHeader = {
+type SellerRow = {
   id: number;
-  sale_date: string | null;
+  name: string;
+  active?: boolean | null;
+  created_at?: string | null;
+};
+
+type SaleRow = {
+  id: number;
+  sale_date: string | null; // YYYY-MM-DD
+  seller_name: string | null;
   seller_id: number | null;
+
+  sale_price: number | null;
+  cost: number | null;
+  fees: number | null;
+  profit: number | null;
+
   notes: string | null;
+  created_at?: string | null;
 };
 
 type SaleLineRow = {
   id: number;
   sale_id: number;
-  item_id: number;
-  qty: number;
-  price: number;
-  fees: number;
+  qty: number | null;
+  price: number | null;
+  fees: number | null;
 };
 
-async function detectFirstWorkingTable(candidates: string[], selectCols: string) {
-  for (const t of candidates) {
-    const res = await supabase.from(t).select(selectCols).limit(1);
-    if (!res.error) return t;
-  }
-  return null;
+function toNum(v: any, fallback = 0) {
+  if (v == null || v === "") return fallback;
+  if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
+  const cleaned = String(v).replace(/[^0-9.-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-async function detectSalesHeaderTable() {
-  return detectFirstWorkingTable(["sales", "Sales", "SalesHeader", "sale_headers"], "id,sale_date");
+function money(n: number) {
+  const v = Number.isFinite(n) ? n : 0;
+  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
-async function detectSaleLinesTable() {
-  return detectFirstWorkingTable(
-    ["sale_lines", "Sales", "sales_lines", "sale_items", "sales_items", "line_items"],
-    "id,sale_id,item_id,qty,price,fees"
-  );
+function ymFromISO(iso: string | null) {
+  if (!iso) return { y: "", m: "" };
+  const y = iso.slice(0, 4);
+  const m = iso.slice(5, 7);
+  return { y, m };
 }
 
-async function detectSellersTable() {
-  return detectFirstWorkingTable(["sales_people", "sale_sellers", "people", "sellers"], "id,name");
+function monthName(m: string) {
+  const map: Record<string, string> = {
+    "01": "Jan",
+    "02": "Feb",
+    "03": "Mar",
+    "04": "Apr",
+    "05": "May",
+    "06": "Jun",
+    "07": "Jul",
+    "08": "Aug",
+    "09": "Sep",
+    "10": "Oct",
+    "11": "Nov",
+    "12": "Dec",
+  };
+  return map[m] ?? m;
 }
 
-async function loadSellersSafe(tableName: string): Promise<Seller[]> {
-  const withActive = await supabase.from(tableName).select("id,name,active").order("name", { ascending: true });
-  if (!withActive.error) {
-    const raw = ((withActive.data as any) ?? []) as any[];
-    return raw
-      .map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: x.active ?? true }))
-      .filter((x) => x.name.trim().length > 0 && x.active !== false);
-  }
-
-  const noActive = await supabase.from(tableName).select("id,name").order("name", { ascending: true });
-  if (noActive.error) throw new Error(noActive.error.message);
-
-  const raw = ((noActive.data as any) ?? []) as any[];
-  return raw.map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: true })).filter((x) => x.name.trim().length > 0);
+function norm(s: string) {
+  return s.trim().toLowerCase();
 }
 
-function monthStartEndExclusive(y: number, m: number) {
-  const start = `${y}-${pad2(m)}-01`;
-  const dt = new Date(y, m - 1, 1);
-  dt.setMonth(dt.getMonth() + 1);
-  const endExclusive = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
-  return { start, endExclusive };
+function nicknameFor(name: string) {
+  const n = norm(name);
+  if (n === "chad") return "Chadillac";
+  if (n === "devan") return "the Dude";
+  return "";
+}
+
+function displaySellerName(name: string) {
+  const nick = nicknameFor(name);
+  return nick || name;
 }
 
 export default function SalesMetrics() {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
-
-  const [tSales, setTSales] = useState<string | null>(null);
-  const [tLines, setTLines] = useState<string | null>(null);
-  const [tSellers, setTSellers] = useState<string | null>(null);
-
-  const [sellers, setSellers] = useState<Seller[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-
-  const [sales, setSales] = useState<SaleHeader[]>([]);
-  const [lines, setLines] = useState<SaleLineRow[]>([]);
-
-  const [selectedSellerIds, setSelectedSellerIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const yearsOptions = useMemo(() => {
-    const yNow = new Date().getFullYear();
-    const ys: number[] = [];
-    for (let y = yNow - 5; y <= yNow + 1; y++) ys.push(y);
-    return ys;
-  }, []);
+  const [sellerTable, setSellerTable] = useState<string>("sales_people");
+  const [salesTable] = useState<string>("sales");
+  const [linesTable, setLinesTable] = useState<string | null>(null);
 
-  const itemById = useMemo(() => {
-    const m = new Map<number, Item>();
-    for (const it of items) m.set(it.id, it);
-    return m;
-  }, [items]);
+  const now = new Date();
+  const [year, setYear] = useState(String(now.getFullYear()));
+  const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
+  const [seller, setSeller] = useState<string>("ALL");
 
-  const sellerById = useMemo(() => {
-    const m = new Map<number, Seller>();
-    for (const s of sellers) m.set(s.id, s);
-    return m;
-  }, [sellers]);
+  const [sellers, setSellers] = useState<SellerRow[]>([]);
+  const [sales, setSales] = useState<SaleRow[]>([]);
+  const [saleLines, setSaleLines] = useState<SaleLineRow[]>([]);
 
-  function toggleSeller(id: number) {
-    setSelectedSellerIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  }
-  function clearSellers() {
-    setSelectedSellerIds([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newSellerName, setNewSellerName] = useState("");
+
+  async function detectTables() {
+    const sellerCandidates = ["sales_people", "sale_sellers", "sellers"];
+    for (const t of sellerCandidates) {
+      const res = await supabase.from(t).select("id").limit(1);
+      if (!res.error) {
+        setSellerTable(t);
+        break;
+      }
+    }
+
+    const lineCandidates: string[] = [];
+    for (const t of lineCandidates) {
+      const res = await supabase.from(t).select("id").limit(1);
+      if (!res.error) {
+        setLinesTable(t);
+        break;
+      }
+    }
   }
 
   async function loadAll() {
@@ -143,83 +149,40 @@ export default function SalesMetrics() {
     setErr("");
 
     try {
-      const [salesTable, linesTable, sellersTable] = await Promise.all([
-        detectSalesHeaderTable(),
-        detectSaleLinesTable(),
-        detectSellersTable(),
-      ]);
+      await detectTables();
 
-      setTSales(salesTable);
-      setTLines(linesTable);
-      setTSellers(sellersTable);
+      const sRes = await supabase.from(sellerTable).select("id,name,active,created_at").order("name", { ascending: true });
+      if (!sRes.error) setSellers(((sRes.data as any) ?? []) as SellerRow[]);
+      else setSellers([]);
 
-      if (!salesTable) throw new Error("Could not detect Sales header table (needs: sale_date).");
-      if (!linesTable) throw new Error("Could not detect Sale lines table (needs: sale_id,item_id,qty,price,fees).");
-
-      // items
-      const iRes = await supabase.from("item_catalog").select("id,name,cost").order("name", { ascending: true });
-      if (iRes.error) throw iRes.error;
-
-      const mappedItems = (((iRes.data as any) ?? []) as any[]).map((x) => ({
-        id: Number(x.id),
-        name: String(x.name ?? ""),
-        cost: safeNum(x.cost),
-      }));
-      setItems(mappedItems.filter((x) => x.name.trim().length > 0));
-
-      // sellers
-      if (sellersTable) {
-        const s = await loadSellersSafe(sellersTable);
-        setSellers(s);
-      } else {
-        setSellers([]);
-      }
-
-      // sales for month
-      const { start, endExclusive } = monthStartEndExclusive(year, month);
-      const sRes = await supabase
+      let salesData: any[] = [];
+      const rich = await supabase
         .from(salesTable)
-        .select("id,sale_date,seller_id,notes")
-        .gte("sale_date", start)
-        .lt("sale_date", endExclusive)
-        .order("sale_date", { ascending: false })
-        .limit(2500);
+        .select("id,sale_date,price,cost,fees,notes,created_at,item,qty,event_name")
+        .order("sale_date", { ascending: false });
 
-      if (sRes.error) throw sRes.error;
-
-      const saleRows: SaleHeader[] = (((sRes.data as any) ?? []) as any[]).map((x) => ({
-        id: Number(x.id),
-        sale_date: x.sale_date ?? null,
-        seller_id: x.seller_id ?? null,
-        notes: x.notes ?? null,
-      }));
-
-      setSales(saleRows);
-
-      const saleIds = saleRows.map((x) => x.id);
-      if (!saleIds.length) {
-        setLines([]);
-        setLoading(false);
-        return;
+      if (!rich.error) {
+        salesData = (rich.data as any) ?? [];
+      } else {
+        const minimal = await supabase.from(salesTable).select("id,sale_date,notes,created_at").order("sale_date", { ascending: false });
+        if (minimal.error) throw minimal.error;
+        salesData = (minimal.data as any) ?? [];
       }
 
-      const lRes = await supabase.from(linesTable).select("id,sale_id,item_id,qty,price,fees").in("sale_id", saleIds);
-      if (lRes.error) throw lRes.error;
+      setSales((salesData as any) ?? []);
 
-      const mappedLines: SaleLineRow[] = ((((lRes.data as any) ?? []) as any[]) as any[]).map((x) => ({
-        id: Number(x.id),
-        sale_id: Number(x.sale_id),
-        item_id: Number(x.item_id),
-        qty: safeNum(x.qty),
-        price: safeNum(x.price),
-        fees: safeNum(x.fees),
-      }));
-
-      setLines(mappedLines);
+      if (linesTable) {
+        const lRes = await supabase.from(linesTable).select("id,sale_id,qty,price,fees").order("id", { ascending: false });
+        if (!lRes.error) setSaleLines(((lRes.data as any) ?? []) as SaleLineRow[]);
+        else setSaleLines([]);
+      } else {
+        setSaleLines([]);
+      }
     } catch (e: any) {
       setErr(e?.message ?? String(e));
+      setSellers([]);
       setSales([]);
-      setLines([]);
+      setSaleLines([]);
     } finally {
       setLoading(false);
     }
@@ -230,413 +193,745 @@ export default function SalesMetrics() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    void loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month]);
+  const yearOptions = useMemo(() => {
+    const ys = new Set<string>();
+    for (const r of sales) {
+      const { y } = ymFromISO(r.sale_date);
+      if (y) ys.add(y);
+    }
+    ys.add(String(new Date().getFullYear()));
+    return Array.from(ys).sort((a, b) => Number(b) - Number(a));
+  }, [sales]);
 
   const filteredSales = useMemo(() => {
-    if (selectedSellerIds.length === 0) return sales;
-    const allow = new Set(selectedSellerIds);
-    return sales.filter((s) => s.seller_id != null && allow.has(s.seller_id));
-  }, [sales, selectedSellerIds]);
+    return sales.filter((r) => {
+      const { y, m } = ymFromISO(r.sale_date);
+      if (year && y !== year) return false;
+      if (month && m !== month) return false;
+
+      if (seller !== "ALL") {
+        const s = (r.seller_name ?? "").trim();
+        if (s !== seller) return false;
+      }
+      return true;
+    });
+  }, [sales, seller, year, month]);
 
   const linesBySale = useMemo(() => {
-    const m = new Map<number, SaleLineRow[]>();
-    for (const ln of lines) {
-      const arr = m.get(ln.sale_id) ?? [];
-      arr.push(ln);
-      m.set(ln.sale_id, arr);
+    const map = new Map<number, SaleLineRow[]>();
+    for (const l of saleLines) {
+      const arr = map.get(l.sale_id) ?? [];
+      arr.push(l);
+      map.set(l.sale_id, arr);
     }
-    return m;
-  }, [lines]);
+    return map;
+  }, [saleLines]);
 
-  const computedSales = useMemo(() => {
-    return filteredSales.map((s) => {
-      const sLines = linesBySale.get(s.id) ?? [];
+  const metrics = useMemo(() => {
+    const count = filteredSales.length;
 
-      const revenue = sLines.reduce((a, ln) => a + safeNum(ln.price), 0);
-      const fees = sLines.reduce((a, ln) => a + safeNum(ln.fees), 0);
-      const cost = sLines.reduce((a, ln) => a + safeNum(itemById.get(ln.item_id)?.cost) * safeNum(ln.qty), 0);
+    let sumSales = 0;
+    let sumFees = 0;
+    let sumCost = 0;
+    let sumProfit = 0;
+    let totalItemsAcrossSales = 0;
 
-      const itemsCount = sLines.length;
-      const profit = revenue - fees - cost;
+    for (const s of filteredSales) {
+      const saleId = s.id;
+      const saleLinesForSale = linesBySale.get(saleId) ?? null;
 
-      const sellerName = s.seller_id ? sellerById.get(s.seller_id)?.name ?? "Unknown" : "—";
+      if (saleLinesForSale && saleLinesForSale.length) {
+        const saleTotalPrice = saleLinesForSale.reduce((acc, l) => acc + toNum(l.price, 0), 0);
+        const saleTotalFees = saleLinesForSale.reduce((acc, l) => acc + toNum(l.fees, 0), 0);
+        const saleTotalQty = saleLinesForSale.reduce((acc, l) => acc + Math.max(0, toNum(l.qty, 0)), 0);
 
-      return { ...s, revenue, fees, cost, profit, itemsCount, sellerName };
-    });
-  }, [filteredSales, linesBySale, itemById, sellerById]);
+        sumSales += saleTotalPrice;
+        sumFees += saleTotalFees;
+        totalItemsAcrossSales += saleTotalQty;
 
-  const totals = useMemo(() => {
-    const count = computedSales.length;
-    const totalProfit = computedSales.reduce((a: number, s: any) => a + safeNum(s.profit), 0);
-    const totalRevenue = computedSales.reduce((a: number, s: any) => a + safeNum(s.revenue), 0);
-    const totalItems = computedSales.reduce((a: number, s: any) => a + safeNum(s.itemsCount), 0);
+        const p =
+          s.profit != null
+            ? toNum(s.profit, 0)
+            : s.sale_price != null || s.cost != null || s.fees != null
+              ? toNum(s.sale_price, 0) - toNum(s.cost, 0) - toNum(s.fees, 0)
+              : saleTotalPrice - saleTotalFees;
 
-    const avgItemsPerSale = count ? totalItems / count : 0;
-    const avgSellingPricePerSale = count ? totalRevenue / count : 0;
+        sumProfit += p;
+        sumCost += toNum(s.cost, 0);
+      } else {
+        sumSales += toNum(s.sale_price, 0);
+        sumFees += toNum(s.fees, 0);
+        sumCost += toNum(s.cost, 0);
 
-    return { count, totalProfit, totalRevenue, avgItemsPerSale, avgSellingPricePerSale };
-  }, [computedSales]);
+        const p = s.profit != null ? toNum(s.profit, 0) : toNum(s.sale_price, 0) - toNum(s.cost, 0) - toNum(s.fees, 0);
 
-  const perSeller = useMemo(() => {
-    const m = new Map<
-      number,
-      { sellerId: number; name: string; salesCount: number; profit: number; itemsTotal: number; revenueTotal: number }
-    >();
-
-    for (const s of computedSales as any[]) {
-      if (!s.seller_id) continue;
-      const id = s.seller_id as number;
-
-      const cur =
-        m.get(id) ?? {
-          sellerId: id,
-          name: s.sellerName as string,
-          salesCount: 0,
-          profit: 0,
-          itemsTotal: 0,
-          revenueTotal: 0,
-        };
-
-      cur.salesCount += 1;
-      cur.profit += safeNum(s.profit);
-      cur.itemsTotal += safeNum(s.itemsCount);
-      cur.revenueTotal += safeNum(s.revenue);
-
-      m.set(id, cur);
+        sumProfit += p;
+        totalItemsAcrossSales += 1;
+      }
     }
 
-    return Array.from(m.values()).sort((a, b) => b.profit - a.profit);
-  }, [computedSales]);
+    const avgSellingPricePerSale = count ? sumSales / count : 0;
+    const avgItemsPerSale = count ? totalItemsAcrossSales / count : 0;
+    const avgProfitPerSale = count ? sumProfit / count : 0;
 
-  function exportCSV() {
-    const label = `${year}-${pad2(month)}`;
-    const header = ["Seller", "Sales Count", "Total Profit", "Avg Items / Sale", "Avg Selling Price / Sale", "Total Revenue"];
-    const out: string[] = [header.map(csvEscape).join(",")];
+    return { count, sumSales, sumFees, sumCost, sumProfit, avgSellingPricePerSale, avgItemsPerSale, avgProfitPerSale };
+  }, [filteredSales, linesBySale]);
 
-    const rows = perSeller.length
-      ? perSeller
-      : [
-          {
-            sellerId: 0,
-            name: "All (no seller assigned)",
-            salesCount: totals.count,
-            profit: totals.totalProfit,
-            itemsTotal: totals.avgItemsPerSale * totals.count,
-            revenueTotal: totals.totalRevenue,
-          },
-        ];
+  async function addSalesperson() {
+    const name = newSellerName.trim();
+    if (!name) return;
 
-    for (const r of rows as any[]) {
-      const avgItems = r.salesCount ? r.itemsTotal / r.salesCount : 0;
-      const avgSale = r.salesCount ? r.revenueTotal / r.salesCount : 0;
+    setLoading(true);
+    setErr("");
 
-      out.push(
-        [r.name, r.salesCount, r.profit, avgItems.toFixed(2), avgSale.toFixed(2), r.revenueTotal].map(csvEscape).join(",")
-      );
+    try {
+      const ins = await supabase.from(sellerTable).insert([{ name, active: true } as any]);
+      if (ins.error) {
+        const ins2 = await supabase.from(sellerTable).insert([{ name } as any]);
+        if (ins2.error) throw ins2.error;
+      }
+
+      setNewSellerName("");
+      setAddOpen(false);
+      await loadAll();
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
     }
-
-    downloadTextFile(`sales_metrics_${label}.csv`, out.join("\n"));
   }
 
+  const selectedSellerDisplay = useMemo(() => {
+    if (seller === "ALL") return "All Salespeople";
+    return displaySellerName(seller);
+  }, [seller]);
+
+  const selectedSellerNickname = useMemo(() => {
+    if (seller === "ALL") return "";
+    return nicknameFor(seller);
+  }, [seller]);
+
   return (
-    <div className="page">
+    <div className="page smX">
       <style>{`
-        .smTop{
+        /* =========================
+           SALES METRICS - VAMPIRIC / GOTHIC POLISH (VISUAL ONLY)
+           ========================= */
+
+        /* Page-only aura (cheap + safe) */
+        .smX{
+          position: relative;
+          isolation: isolate;
+        }
+        .smX::before{
+          content:"";
+          position:absolute;
+          inset:-26px;
+          z-index:-1;
+          pointer-events:none;
+          background:
+            radial-gradient(900px 520px at 18% 0%, rgba(212,175,55,0.14), transparent 60%),
+            radial-gradient(720px 520px at 82% 18%, rgba(160,20,40,0.18), transparent 62%),
+            radial-gradient(760px 520px at 55% 85%, rgba(140,90,255,0.12), transparent 60%),
+            radial-gradient(520px 360px at 20% 80%, rgba(0,210,255,0.06), transparent 65%);
+          filter: blur(10px);
+          opacity: 0.98;
+          animation: smAura 8.4s ease-in-out infinite;
+        }
+
+        /* =========================================
+           EMBER STORM (VIOLENT) — VISUAL ONLY
+           ========================================= */
+        .smX::after{
+          content:"";
+          position:absolute;
+          inset:-34px;
+          z-index:-1;
+          pointer-events:none;
+
+          /* MANY ember fields + inferno base + heat shimmer-ish streak */
+          background:
+            /* BIG embers (rare, bright) */
+            radial-gradient(circle, rgba(255,235,170,0.28) 0 2px, transparent 7px),
+            radial-gradient(circle, rgba(255,160,90,0.22) 0 2px, transparent 7px),
+            radial-gradient(circle, rgba(255,90,50,0.18) 0 2px, transparent 7px),
+
+            /* MID embers (lots) */
+            radial-gradient(circle, rgba(255,220,150,0.22) 0 1px, transparent 4px),
+            radial-gradient(circle, rgba(255,170,95,0.18) 0 1px, transparent 4px),
+            radial-gradient(circle, rgba(255,120,70,0.16) 0 1px, transparent 4px),
+            radial-gradient(circle, rgba(255,80,40,0.14) 0 1px, transparent 4px),
+
+            /* FINE embers (storm) */
+            radial-gradient(circle, rgba(255,235,180,0.16) 0 1px, transparent 3px),
+            radial-gradient(circle, rgba(255,200,120,0.14) 0 1px, transparent 3px),
+            radial-gradient(circle, rgba(255,150,90,0.12) 0 1px, transparent 3px),
+            radial-gradient(circle, rgba(255,105,60,0.10) 0 1px, transparent 3px),
+
+            /* Inferno glow at bottom */
+            radial-gradient(1200px 540px at 50% 120%,
+              rgba(255,55,30,0.34) 0%,
+              rgba(255,120,55,0.20) 28%,
+              rgba(255,200,110,0.12) 52%,
+              transparent 80%),
+
+            /* Subtle hot-air shimmer streak (non-striped, soft) */
+            linear-gradient(180deg, transparent 0%, rgba(255,120,55,0.06) 55%, transparent 100%);
+
+          background-size:
+            320px 620px, /* big A */
+            360px 740px, /* big B */
+            420px 820px, /* big C */
+
+            240px 420px, /* mid A */
+            280px 500px, /* mid B */
+            320px 560px, /* mid C */
+            360px 640px, /* mid D */
+
+            140px 240px, /* fine A */
+            160px 280px, /* fine B */
+            180px 320px, /* fine C */
+            200px 360px, /* fine D */
+
+            100% 100%,   /* glow */
+            100% 100%;   /* shimmer */
+
+          background-position:
+            12% -120%,
+            76% -160%,
+            44% -210%,
+
+            20% -90%,
+            52% -140%,
+            86% -110%,
+            66% -170%,
+
+            10% -40%,
+            36% -220%,
+            62% -120%,
+            88% -260%,
+
+            50% 120%,
+            50% 0%;
+
+          mix-blend-mode: screen;
+          opacity: 0.86;
+          filter: blur(0.10px);
+          transform: translateZ(0);
+
+          animation:
+            smEmbersFall 1.15s linear infinite,
+            smEmbersFall2 1.85s linear infinite,
+            smEmbersFall3 2.65s linear infinite,
+            smEmbersDriftX 1.35s ease-in-out infinite,
+            smEmbersFlicker 0.75s ease-in-out infinite;
+        }
+
+        @keyframes smAura{
+          0% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.92; }
+          50% { transform: translate3d(8px,-4px,0px) scale(1.03); opacity: 1; }
+          100% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.92; }
+        }
+
+        /* Main fall (fine embers dominate) */
+        @keyframes smEmbersFall{
+          0%{
+            background-position:
+              12% -120%,
+              76% -160%,
+              44% -210%,
+
+              20% -90%,
+              52% -140%,
+              86% -110%,
+              66% -170%,
+
+              10% -40%,
+              36% -220%,
+              62% -120%,
+              88% -260%,
+
+              50% 120%,
+              50% 0%;
+          }
+          100%{
+            background-position:
+              12% 180%,
+              76% 220%,
+              44% 260%,
+
+              20% 240%,
+              52% 280%,
+              86% 250%,
+              66% 300%,
+
+              10% 420%,
+              36% 520%,
+              62% 460%,
+              88% 560%,
+
+              50% 120%,
+              50% 0%;
+          }
+        }
+
+        /* Secondary fall offsets to avoid pattern lock */
+        @keyframes smEmbersFall2{
+          0%{ transform: translate3d(0px,0px,0px) scale(1); }
+          100%{ transform: translate3d(0px,3px,0px) scale(1.01); }
+        }
+
+        /* Third layer: tiny vertical “kick” so it feels chaotic */
+        @keyframes smEmbersFall3{
+          0%,100%{ filter: blur(0.10px); }
+          50%{ filter: blur(0.24px); }
+        }
+
+        /* Side drift (violent) */
+        @keyframes smEmbersDriftX{
+          0%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
+          25%{ transform: translate3d(6px,-1px,0px) skewX(-0.6deg); }
+          50%{ transform: translate3d(-8px,0px,0px) skewX(0.9deg); }
+          75%{ transform: translate3d(5px,1px,0px) skewX(-0.4deg); }
+          100%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
+        }
+
+        /* Flicker (aggressive) */
+        @keyframes smEmbersFlicker{
+          0%,100%{ opacity: 0.78; }
+          18%{ opacity: 0.92; }
+          36%{ opacity: 0.80; }
+          58%{ opacity: 0.95; }
+          78%{ opacity: 0.84; }
+        }
+
+        @media (prefers-reduced-motion: reduce){
+          .smX::before, .smX::after{ animation:none; }
+        }
+
+        .smX .topRow{
           display:flex;
           align-items:flex-start;
-          justify-content:space-between;
-          gap:12px;
-          flex-wrap:wrap;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          margin-bottom: 10px;
         }
-        .smControls{
+
+        /* Gothic title treatment (no external font; still legible) */
+        .smX .gothTitle{
+          margin: 0;
+          font-weight: 1000;
+          letter-spacing: 1.1px;
+          font-variant: small-caps;
+          font-size: clamp(30px, 7.6vw, 44px);
+          line-height: 1.02;
+          color: rgba(255,255,255,0.96);
+          text-shadow:
+            0 0 12px rgba(212,175,55,0.20),
+            0 0 18px rgba(160,20,40,0.16),
+            0 16px 52px rgba(0,0,0,0.68);
+        }
+
+        /* Little "blood-gold" underline rune */
+        .smX .titleRune{
+          display:inline-block;
+          margin-top: 6px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(212,175,55,0.20);
+          background:
+            radial-gradient(220px 60px at 30% 0%, rgba(212,175,55,0.16), transparent 60%),
+            radial-gradient(260px 80px at 80% 40%, rgba(160,20,40,0.16), transparent 62%),
+            rgba(0,0,0,0.18);
+          box-shadow:
+            0 14px 40px rgba(0,0,0,0.35),
+            0 0 18px rgba(212,175,55,0.08);
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(255,255,255,0.74);
+        }
+        .smX .runeDot{
+          display:inline-block;
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          margin-right: 8px;
+          background: rgba(212,175,55,0.78);
+          box-shadow: 0 0 14px rgba(212,175,55,0.45);
+        }
+
+        .smX .sub{ margin-top:6px; font-size: 13px; }
+
+        .smX .controls{
           display:flex;
-          gap:10px;
-          flex-wrap:wrap;
+          gap: 10px;
+          flex-wrap: wrap;
           align-items:center;
           justify-content:flex-end;
         }
 
-        .chipRow{
-          display:flex;
-          gap:8px;
-          flex-wrap:wrap;
-          margin-top:10px;
+        .smX .filterRow{
+          margin-top: 10px;
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
         }
-        .chip{
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.18);
-          padding:8px 10px;
-          border-radius:999px;
-          font-weight:950;
-          cursor:pointer;
-        }
-        .chipOn{
-          border-color: rgba(130, 90, 255, .45);
-          background: rgba(118, 68, 255, .20);
-        }
+        .smX .filterRow .full{ grid-column: 1 / -1; }
 
-        .smGrid{
+        .smX .grid{
+          margin-top: 12px;
           display:grid;
           grid-template-columns: repeat(12, 1fr);
           gap: 10px;
-          margin-top: 12px;
         }
-        .smCard{
+        .smX .cardKpi{
           grid-column: span 6;
           padding: 12px;
+          position: relative;
+          overflow: hidden;
+          transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          border-color: rgba(255,255,255,0.10);
+          box-shadow:
+            0 14px 40px rgba(0,0,0,0.35),
+            0 0 0 1px rgba(255,255,255,0.02) inset;
         }
-        .kpi{
+        .smX .cardKpi::before{
+          content:"";
+          position:absolute;
+          inset:-1px;
+          border-radius: 18px;
+          pointer-events:none;
+          background:
+            radial-gradient(600px 240px at 15% 0%, rgba(212,175,55,0.18), transparent 60%),
+            radial-gradient(520px 220px at 85% 40%, rgba(160,20,40,0.14), transparent 62%),
+            linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+          opacity: 0.70;
+          filter: blur(0.4px);
+        }
+        .smX .cardKpi:hover{
+          transform: translateY(-1px);
+          border-color: rgba(212,175,55,0.22);
+          box-shadow:
+            0 18px 55px rgba(0,0,0,0.45),
+            0 0 22px rgba(212,175,55,0.10);
+        }
+        .smX .kpiLabel{
           font-size: 12px;
-          color: rgba(255,255,255,0.70);
           font-weight: 950;
+          color: rgba(255,255,255,0.70);
+          position: relative;
+          z-index: 1;
         }
-        .val{
-          margin-top: 4px;
+        .smX .kpiVal{
+          margin-top: 5px;
           font-size: 22px;
           font-weight: 950;
           letter-spacing: 0.2px;
+          position: relative;
+          z-index: 1;
+          text-shadow:
+            0 0 16px rgba(212,175,55,0.12),
+            0 12px 30px rgba(0,0,0,0.45);
         }
 
-        .tableWrap{
+        .smX .list{
           margin-top: 12px;
-          overflow:auto;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.10);
-        }
-        table{
-          width:100%;
-          border-collapse: collapse;
-          min-width: 760px;
-        }
-        th, td{
           padding: 12px;
-          text-align:left;
-          border-bottom: 1px solid rgba(255,255,255,.08);
-          vertical-align: top;
-          font-weight: 900;
+          position: relative;
+          overflow: hidden;
         }
-        th{
-          font-size: 12px;
-          opacity: .85;
-          font-weight: 950;
-        }
-        td{
-          font-size: 14px;
+        .smX .list::before{
+          content:"";
+          position:absolute;
+          inset:-40% -30%;
+          pointer-events:none;
+          background:
+            linear-gradient(115deg, transparent 0%, rgba(212,175,55,0.10) 22%, transparent 45%, rgba(160,20,40,0.10) 70%, transparent 100%);
+          opacity: 0.16;
+          transform: rotate(-8deg);
         }
 
-        .list{
-          margin-top: 12px;
-          padding: 12px;
-        }
-        .row{
+        .smX .saleRow{
           display:flex;
           justify-content: space-between;
           gap: 10px;
           padding: 10px 0;
           border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        .row:last-child{ border-bottom: none; }
-        .left{
-          min-width: 0;
-          display:flex;
-          flex-direction: column;
-          gap: 2px;
-        }
-        .title{
+        .smX .saleRow:last-child{ border-bottom:none; }
+        .smX .left{ min-width: 0; }
+        .smX .title{
           font-weight: 950;
           overflow:hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .sub{
+        .smX .meta{
+          margin-top: 3px;
           font-size: 12px;
           color: rgba(255,255,255,0.65);
           overflow:hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .right{
+        .smX .right{
           text-align:right;
-          display:flex;
-          flex-direction: column;
-          gap: 2px;
           flex: 0 0 auto;
         }
 
-        /* iOS zoom fix */
-        select.input, input.input { font-size: 16px; }
+        .smX .overlay{
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.72);
+          display:flex;
+          align-items:flex-end;
+          justify-content:center;
+          padding: 10px;
+          z-index: 500;
+        }
+
+        /* ONLY CHANGE: lift the sheet up a bit on mobile so it doesn't hug the bottom */
+        .smX .sheet{
+          width: min(980px, 100%);
+          border-radius: 22px;
+          border: 1px solid rgba(212,175,55,0.20);
+          background: rgba(8,10,18,0.92);
+          box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+          backdrop-filter: blur(12px);
+          padding: 14px;
+          padding-bottom: calc(14px + env(safe-area-inset-bottom));
+          margin-bottom: calc(22px + env(safe-area-inset-bottom));
+        }
+        @media (max-width: 820px){
+          .smX .sheet{
+            margin-bottom: calc(58px + env(safe-area-inset-bottom));
+          }
+        }
+
+        .smX .sheet h2{ margin:0; font-size: 16px; }
+        .smX .sheet .input{
+          height: 46px;
+          border-radius: 16px;
+          font-weight: 900;
+          font-size: 16px;
+          margin-top: 12px;
+        }
+
+        input, select, textarea { font-size: 16px; }
 
         @media (max-width: 820px){
-          .smCard{ grid-column: span 12; }
+          .smX .cardKpi{ grid-column: span 12; }
+          .smX .filterRow{ grid-template-columns: 1fr; }
         }
       `}</style>
 
-      <div className="row smTop">
+      <div className="topRow">
         <div>
-          <h1 style={{ margin: 0 }}>Sales Metrics</h1>
-          <div className="muted" style={{ marginTop: 6 }}>
-            Month + Year + multi-seller metrics. Tables → items: <b>item_catalog</b>, sales: <b>{tSales ?? "detecting..."}</b>, lines: <b>{tLines ?? "detecting..."}</b>, sellers: <b>{tSellers ?? "detecting..."}</b>
+          <h1 className="gothTitle">Sales Metrics</h1>
+
+          <div className="muted sub">
+            Month + Year + Seller totals. Includes avg items/sale + avg selling price/sale.
+          </div>
+
+          <div className="titleRune">
+            <span className="runeDot" />
+            {selectedSellerDisplay}
+            {selectedSellerNickname ? <span style={{ color: "rgba(212,175,55,0.95)" }}> • {selectedSellerNickname}</span> : null}
+            <span className="muted" style={{ fontWeight: 800 }}>
+              {" "}
+              • {monthName(month)} {year}
+            </span>
+          </div>
+
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            ꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂·☁︎ ⋆.˚ ☾⭒.˚ ꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂⋆.ೃ࿔☁︎ ݁ ˖*༄꧁⎝ 𓆩༺✧༻𓆪 ⎠꧂
           </div>
         </div>
 
-        <div className="smControls">
-          <select className="input" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ minWidth: 120 }}>
-            {yearsOptions.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-
-          <select className="input" value={month} onChange={(e) => setMonth(Number(e.target.value))} style={{ minWidth: 120 }}>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>{pad2(m)}</option>
-            ))}
-          </select>
-
+        <div className="controls">
+          <button className="btn" type="button" onClick={() => setAddOpen(true)}>
+            + Add Salesperson
+          </button>
           <button className="btn" type="button" onClick={() => void loadAll()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
-          </button>
-
-          <button className="btn" type="button" onClick={exportCSV} disabled={loading}>
-            Export CSV
           </button>
         </div>
       </div>
 
       {err ? (
-        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)", marginTop: 12 }}>
+        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
           <b style={{ color: "salmon" }}>Error:</b> <span className="muted">{err}</span>
         </div>
       ) : null}
 
-      <div className="card" style={{ marginTop: 12, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 950 }}>Salespeople</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {selectedSellerIds.length === 0 ? "All sellers selected" : `${selectedSellerIds.length} selected`}
+      {/* Filters */}
+      <div className="card" style={{ padding: 12, marginTop: 10 }}>
+        <div style={{ fontWeight: 950, marginBottom: 8 }}>Filters</div>
+
+        <div className="filterRow">
+          <div>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+              Year
+            </div>
+            <select className="input" value={year} onChange={(e) => setYear(e.target.value)}>
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+              Month
+            </div>
+            <select className="input" value={month} onChange={(e) => setMonth(e.target.value)}>
+              {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => (
+                <option key={m} value={m}>
+                  {monthName(m)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="full">
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+              Salesperson
+            </div>
+
+            <select className="input" value={seller} onChange={(e) => setSeller(e.target.value)}>
+              <option value="ALL">All Salespeople</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.name}>
+                  {displaySellerName(s.name)}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
+      </div>
 
-        <div className="chipRow">
-          <button className={`chip ${selectedSellerIds.length === 0 ? "chipOn" : ""}`} onClick={clearSellers}>
-            All
-          </button>
-
-          {sellers.map((p) => {
-            const on = selectedSellerIds.includes(p.id);
-            return (
-              <button key={p.id} className={`chip ${on ? "chipOn" : ""}`} onClick={() => toggleSeller(p.id)}>
-                {p.name}
-              </button>
-            );
-          })}
+      {/* KPIs */}
+      <div className="grid">
+        <div className="card cardKpi">
+          <div className="kpiLabel">Sales Count</div>
+          <div className="kpiVal">{metrics.count}</div>
         </div>
 
-        <div className="muted" style={{ marginTop: 10 }}>
-          Tip: tap multiple names to compare. Leave on “All” to see everyone.
+        <div className="card cardKpi">
+          <div className="kpiLabel">Total Sales</div>
+          <div className="kpiVal">{money(metrics.sumSales)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Total Profit</div>
+          <div className="kpiVal">{money(metrics.sumProfit)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Avg Selling Price / Sale</div>
+          <div className="kpiVal">{money(metrics.avgSellingPricePerSale)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Avg Items / Sale</div>
+          <div className="kpiVal">{metrics.avgItemsPerSale.toFixed(2)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Total Fees</div>
+          <div className="kpiVal">{money(metrics.sumFees)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Avg Profit / Sale</div>
+          <div className="kpiVal">{money(metrics.avgProfitPerSale)}</div>
+        </div>
+
+        <div className="card cardKpi">
+          <div className="kpiLabel">Total Cost (if stored)</div>
+          <div className="kpiVal">{money(metrics.sumCost)}</div>
         </div>
       </div>
 
-      <div className="smGrid">
-        <div className="card smCard">
-          <div className="kpi">Sales Count</div>
-          <div className="val">{totals.count}</div>
-        </div>
-
-        <div className="card smCard">
-          <div className="kpi">Total Profit</div>
-          <div className="val">{money(totals.totalProfit)}</div>
-        </div>
-
-        <div className="card smCard">
-          <div className="kpi">Avg Items / Sale</div>
-          <div className="val">{Number.isFinite(totals.avgItemsPerSale) ? totals.avgItemsPerSale.toFixed(2) : "0.00"}</div>
-        </div>
-
-        <div className="card smCard">
-          <div className="kpi">Avg Selling Price / Sale</div>
-          <div className="val">{money(totals.avgSellingPricePerSale)}</div>
-        </div>
-      </div>
-
-      <div className="card" style={{ marginTop: 12, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 950 }}>Seller Breakdown</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {perSeller.length ? `Showing ${perSeller.length}` : "No seller-tagged sales yet"}
-          </div>
-        </div>
-
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Seller</th>
-                <th>Sales</th>
-                <th>Total Profit</th>
-                <th>Avg Items/Sale</th>
-                <th>Avg Selling Price/Sale</th>
-              </tr>
-            </thead>
-            <tbody>
-              {perSeller.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ opacity: 0.8 }}>
-                    If you don’t see sellers here, sales probably don’t have seller_id filled yet.
-                  </td>
-                </tr>
-              ) : (
-                perSeller.map((r) => {
-                  const avgItems = r.salesCount ? r.itemsTotal / r.salesCount : 0;
-                  const avgSale = r.salesCount ? r.revenueTotal / r.salesCount : 0;
-                  return (
-                    <tr key={r.sellerId}>
-                      <td>{r.name}</td>
-                      <td>{r.salesCount}</td>
-                      <td>{money(r.profit)}</td>
-                      <td>{avgItems.toFixed(2)}</td>
-                      <td>{money(avgSale)}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+      {/* Recent list */}
       <div className="card list">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 950 }}>Recent Sales (this month)</div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+          <div style={{ fontWeight: 950 }}>Recent Sales (filtered)</div>
           <div className="muted" style={{ fontSize: 12 }}>
-            Showing {Math.min(computedSales.length, 30)} of {computedSales.length}
+            Showing {filteredSales.length}
           </div>
         </div>
 
         <div style={{ marginTop: 8 }}>
-          {(computedSales as any[]).slice(0, 30).map((s) => (
-            <div key={s.id} className="row">
-              <div className="left">
-                <div className="title">{s.sale_date ?? "—"} • {s.sellerName}</div>
-                <div className="sub">
-                  Items: {s.itemsCount} • Revenue: {money(s.revenue)} • Notes: {s.notes ?? "—"}
-                </div>
-              </div>
-              <div className="right">
-                <div style={{ fontWeight: 950 }}>{money(s.revenue)}</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Profit: {money(s.profit)}
-                </div>
-              </div>
-            </div>
-          ))}
+          {filteredSales.slice(0, 40).map((r) => {
+            const p = r.profit != null ? toNum(r.profit, 0) : toNum(r.sale_price, 0) - toNum(r.cost, 0) - toNum(r.fees, 0);
 
-          {computedSales.length === 0 ? <div className="muted" style={{ padding: 10 }}>No sales found for this month.</div> : null}
+            return (
+              <div key={r.id} className="saleRow">
+                <div className="left" style={{ minWidth: 0 }}>
+                  <div className="title">
+                    {r.seller_name ? r.seller_name : "Sale"}{" "}
+                    <span className="muted" style={{ fontWeight: 900 }}>
+                      • #{r.id}
+                    </span>
+                  </div>
+                  <div className="meta">
+                    {r.sale_date ?? ""}
+                    {r.notes ? ` • ${r.notes}` : ""}
+                  </div>
+                </div>
+                <div className="right">
+                  <div style={{ fontWeight: 950 }}>{money(toNum(r.sale_price, 0))}</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Profit: {money(p)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {!filteredSales.length ? <div className="muted" style={{ padding: 10 }}>No sales found for this filter.</div> : null}
         </div>
       </div>
+
+      {/* Add salesperson sheet */}
+      {addOpen ? (
+        <div className="overlay" onClick={() => setAddOpen(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+              <div>
+                <h2>Add Salesperson</h2>
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Saves to <b>{sellerTable}</b>.
+                </div>
+              </div>
+              <button className="btn" type="button" onClick={() => setAddOpen(false)} style={{ height: 46, borderRadius: 16 }}>
+                Close
+              </button>
+            </div>
+
+            <input
+              className="input"
+              value={newSellerName}
+              onChange={(e) => setNewSellerName(e.target.value)}
+              placeholder="Name (ex: Devan, Chad)"
+              autoFocus
+            />
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+              <button className="btn primary" type="button" onClick={() => void addSalesperson()} disabled={loading}>
+                {loading ? "Saving…" : "Save Salesperson"}
+              </button>
+              <button className="btn" type="button" onClick={() => setAddOpen(false)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

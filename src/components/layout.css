@@ -1,391 +1,74 @@
 /* src/components/layout.css */
 
-/* =========================
-   Sticky header support
-   ========================= */
-html, body, #root{
-  height: 100%;
-}
-
-body{
-  margin: 0;
-  overflow-x: hidden;
-}
-
-/* =========================
-   Dream Room - Cloudy Purple Theme
-   ========================= */
-:root{
-  --bg0: #07070b;
-  --glass: rgba(255,255,255,0.06);
-  --stroke: rgba(255,255,255,0.10);
-
-  --text: rgba(255,255,255,0.92);
-  --muted: rgba(255,255,255,0.68);
-
-  --violet: 152, 90, 255;
-  --pink: 255, 90, 200;
-  --blue: 70, 140, 255;
-
-  --radius: 18px;
-}
-
-.ad-shell{
+.layout {
   min-height: 100vh;
-  color: var(--text);
-  position: relative;
-  isolation: isolate;
 }
 
-.ad-shell.dreamy{
-  background:
-    radial-gradient(1200px 700px at 25% 10%, rgba(var(--violet),0.16), transparent 55%),
-    radial-gradient(900px 520px at 80% 15%, rgba(var(--pink),0.14), transparent 52%),
-    radial-gradient(1100px 700px at 50% 100%, rgba(0,0,0,0.95), transparent 58%),
-    linear-gradient(180deg, rgba(5,5,10,0.78), rgba(0,0,0,0.92));
+.topBar {
+  padding: 12px 12px 0 12px;
 }
 
-/* dreamy background blobs */
-.dream-bg{
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(900px 500px at 20% 15%, rgba(var(--violet),0.22), transparent 60%),
-    radial-gradient(900px 500px at 85% 25%, rgba(var(--pink),0.20), transparent 62%),
-    radial-gradient(1100px 700px at 55% 95%, rgba(var(--blue),0.12), transparent 62%);
-  opacity: 1;
+.brand {
+  margin-bottom: 10px;
 }
 
-/* ✅ Shimmer overlay */
-.dream-shimmer{
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    110deg,
-    transparent 20%,
-    rgba(255,255,255,0.06) 35%,
-    transparent 50%,
-    rgba(255,255,255,0.04) 65%,
-    transparent 80%
-  );
-  background-size: 200% 100%;
-  mix-blend-mode: screen;
-  opacity: 0.65;
-  animation: dreamShimmer 10s ease-in-out infinite;
+.brandTitle {
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.92);
 }
 
-@keyframes dreamShimmer{
-  0%{ background-position: 0% 0%; }
-  50%{ background-position: 100% 0%; }
-  100%{ background-position: 0% 0%; }
-}
-
-/* fog overlay */
-.dream-fog{
-  position: fixed;
-  inset: -20%;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(700px 420px at 30% 30%, rgba(255,255,255,0.06), transparent 60%),
-    radial-gradient(700px 420px at 70% 55%, rgba(255,255,255,0.05), transparent 62%),
-    radial-gradient(900px 520px at 45% 70%, rgba(255,255,255,0.04), transparent 66%);
-  filter: blur(18px);
-  opacity: 0.85;
-}
-
-/* ✅ Floating particles */
-.dream-particles{
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.55;
-}
-
-.dream-particles::before{
-  content:"";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 10% 20%, rgba(255,255,255,0.18) 0 2px, transparent 3px),
-    radial-gradient(circle at 30% 70%, rgba(255,255,255,0.12) 0 1.5px, transparent 3px),
-    radial-gradient(circle at 65% 35%, rgba(255,255,255,0.10) 0 2px, transparent 3px),
-    radial-gradient(circle at 80% 80%, rgba(255,255,255,0.14) 0 2px, transparent 3px),
-    radial-gradient(circle at 50% 10%, rgba(255,255,255,0.10) 0 1.5px, transparent 3px);
-  filter: blur(0.2px);
-  animation: floatParticles 12s ease-in-out infinite;
-}
-
-@keyframes floatParticles{
-  0%{ transform: translateY(0px); }
-  50%{ transform: translateY(-18px); }
-  100%{ transform: translateY(0px); }
-}
-
-/* Keep actual UI above bg */
-.ad-topbar, .ad-main{ position: relative; z-index: 1; }
-
-/* Topbar + Tabs */
-.ad-topbar{
-  display:flex;
-  align-items:center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 14px;
-
-  position: sticky;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 9999;
-
-  background: rgba(10,10,16,0.78);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255,255,255,0.10);
-}
-
-.dreamy-topbar{
-  box-shadow:
-    0 10px 30px rgba(0,0,0,0.35),
-    0 0 0 1px rgba(var(--violet),0.08) inset;
-}
-
-.ad-brand{
-  display:flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 200px;
-}
-
-.ad-brandTitle{
-  font-weight: 950;
-  letter-spacing: 0.3px;
-  font-size: 16px;
-  color: rgba(255,255,255,0.94);
-  text-shadow: 0 0 18px rgba(var(--violet),0.22);
-}
-
-.ad-brandSub{
+.brandSub {
+  margin-top: 3px;
   font-size: 12px;
-  color: rgba(255,255,255,0.62);
+  color: rgba(255, 255, 255, 0.55);
 }
 
-.ad-tabs{
-  display:flex;
+/* The nav "tabs" row */
+.topNav {
+  display: flex;
+  flex-wrap: wrap;              /* wraps into 2 rows on mobile */
   gap: 10px;
-  flex-wrap: wrap;
-  align-items:center;
-  justify-content: flex-end;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(120, 160, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
 }
 
-.ad-tab{
+.topNav a {
   text-decoration: none;
-  color: rgba(255,255,255,0.78);
   font-weight: 900;
   font-size: 13px;
   padding: 10px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.04);
-  transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
 }
 
-.ad-tab:hover{
-  transform: translateY(-1px);
-  background: rgba(255,255,255,0.06);
-  border-color: rgba(var(--violet),0.22);
-  box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+.topNav a.active {
+  border-color: rgba(152, 90, 255, 0.50);
+  background: linear-gradient(180deg, rgba(152, 90, 255, 0.22), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
 }
 
-.ad-tab.active{
-  color: rgba(255,255,255,0.95);
-  border-color: rgba(var(--violet),0.38);
-  background: linear-gradient(180deg, rgba(var(--violet),0.22), rgba(255,255,255,0.04));
-  box-shadow:
-    0 10px 24px rgba(0,0,0,0.30),
-    0 0 0 1px rgba(var(--violet),0.12) inset;
+.pageWrap {
+  padding: 12px;
 }
 
-/* Main area */
-.ad-main{
-  padding: 14px;
-}
-
-.dreamy-main{
-  padding: 16px;
-}
-
-/* Global card + button + input styling */
-.card{
-  border-radius: var(--radius);
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(10,10,16,0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow:
-    0 18px 60px rgba(0,0,0,0.40),
-    0 0 0 1px rgba(var(--violet),0.06) inset;
-}
-
-.btn{
-  cursor: pointer;
-  border-radius: 999px;
-  padding: 10px 14px;
-  font-weight: 950;
-  letter-spacing: 0.2px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.92);
-  transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease, opacity .12s ease;
-}
-
-.btn:hover{
-  transform: translateY(-1px);
-  background: rgba(255,255,255,0.07);
-  border-color: rgba(var(--violet),0.22);
-  box-shadow: 0 14px 30px rgba(0,0,0,0.25);
-}
-
-.btn:disabled{
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.btn.primary{
-  border-color: rgba(var(--violet),0.32);
-  background: linear-gradient(180deg, rgba(var(--violet),0.28), rgba(var(--pink),0.12));
-  box-shadow:
-    0 16px 34px rgba(128, 4, 4, 0.842),
-    0 0 0 1px rgba(var(--violet),0.10) inset;
-}
-
-.input, textarea.input, select.input{
-  width: 100%;
-  box-sizing: border-box;
-  height: 40px;
-  padding: 0.55em 0.75em;
-  border-radius: 14px;
-  border: 1px solid rgba(var(--blue),0.18);
-  background: rgba(20, 18, 38, 0.55);
-  color: rgba(255,255,255,0.92);
-  outline: none;
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.20) inset;
-}
-
-textarea.input{
-  height: auto;
-  min-height: 110px;
-}
-
-.input:focus, textarea.input:focus, select.input:focus{
-  border-color: rgba(var(--violet),0.35);
-  box-shadow: 0 0 0 3px rgba(var(--violet),0.14);
-}
-
-select.input option,
-select.input optgroup{
-  background: #0b0b12 !important;
-  color: #ffffff !important;
-}
-
-.muted{ color: var(--muted); }
-
-@media (max-width: 780px){
-  .ad-topbar{ padding: 10px 12px; }
-  .ad-brandTitle{ font-size: 15px; }
-  .ad-tab{ padding: 9px 12px; font-size: 12px; }
-  input.input, select.input, textarea.input { font-size: 16px; }
-}
-
-/* ============ Event Calendar: stronger "has event" highlight ============ */
-/* NOTE: Your CalendarPage uses .day and .daynum and .dot
-   If you want these styles to actually apply, make CalendarPage
-   use: className="day cal-day ..." and rename dot -> eventDot, daynum -> cal-num
-   OR keep these as-is and use the alternative block below. */
-
-.cal-day.hasEvent{
-  border-color: rgba(var(--violet), 0.55) !important;
-  background:
-    radial-gradient(120px 80px at 30% 30%, rgba(var(--violet), 0.38), transparent 60%),
-    radial-gradient(120px 80px at 70% 70%, rgba(var(--pink), 0.22), transparent 62%),
-    rgba(255,255,255,0.04) !important;
-
-  box-shadow:
-    0 0 0 1px rgba(var(--violet), 0.22) inset,
-    0 18px 40px rgba(var(--violet), 0.18),
-    0 0 26px rgba(var(--violet), 0.22),
-    0 0 18px rgba(var(--pink), 0.10) !important;
-}
-
-.cal-day.hasEvent:hover{
-  transform: translateY(-1px);
-  box-shadow:
-    0 0 0 1px rgba(var(--violet), 0.26) inset,
-    0 22px 50px rgba(var(--violet), 0.22),
-    0 0 34px rgba(var(--violet), 0.28),
-    0 0 22px rgba(var(--pink), 0.14) !important;
-}
-
-.cal-day .eventDot{
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(var(--violet), 0.95);
-  box-shadow:
-    0 0 0 2px rgba(0,0,0,0.45),
-    0 0 16px rgba(var(--violet), 0.55),
-    0 0 10px rgba(var(--pink), 0.28);
-}
-
-.cal-day.hasEvent .cal-num{
-  color: rgba(255,255,255,0.98);
-  text-shadow: 0 0 18px rgba(var(--violet), 0.35);
-}
-
-/* ✅ Alternative: APPLY TO YOUR CURRENT CalendarPage (uses .day .daynum .dot) */
-.day.hasEvent{
-  border-color: rgba(var(--violet), 0.62) !important;
-  background:
-    radial-gradient(120px 80px at 30% 30%, rgba(var(--violet), 0.42), transparent 60%),
-    radial-gradient(120px 80px at 70% 70%, rgba(var(--pink), 0.26), transparent 62%),
-    rgba(255,255,255,0.04) !important;
-
-  box-shadow:
-    0 0 0 1px rgba(var(--violet), 0.26) inset,
-    0 18px 44px rgba(var(--violet), 0.22),
-    0 0 30px rgba(var(--violet), 0.30),
-    0 0 22px rgba(var(--pink), 0.14) !important;
-}
-
-.day.hasEvent:hover{
-  transform: translateY(-1px);
-  box-shadow:
-    0 0 0 1px rgba(var(--violet), 0.30) inset,
-    0 22px 56px rgba(var(--violet), 0.26),
-    0 0 38px rgba(var(--violet), 0.36),
-    0 0 26px rgba(var(--pink), 0.18) !important;
-}
-
-.day .dot{
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(var(--violet), 0.98);
-  box-shadow:
-    0 0 0 2px rgba(0,0,0,0.45),
-    0 0 18px rgba(var(--violet), 0.60),
-    0 0 12px rgba(var(--pink), 0.32);
-}
-
-.day.hasEvent .daynum{
-  color: rgba(255,255,255,0.98);
-  text-shadow: 0 0 18px rgba(var(--violet), 0.40);
+/* Mobile tightening */
+@media (max-width: 520px) {
+  .topBar {
+    padding: 10px 10px 0 10px;
+  }
+  .topNav {
+    gap: 8px;
+    padding: 8px;
+  }
+  .topNav a {
+    padding: 9px 12px;
+    font-size: 12px;
+  }
 }

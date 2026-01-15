@@ -1,1066 +1,908 @@
-import { useEffect, useMemo, useState } from "react";
+// src/pages/Sales.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../supabaseClient";
+import { Link } from "react-router-dom";
 
-/** -----------------------------
- *  Utilities
- *  ----------------------------- */
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-function safeNum(v: any) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function money(n: number) {
-  const v = Number.isFinite(n) ? n : 0;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
-}
-function csvEscape(v: any) {
-  const s = String(v ?? "");
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-function downloadTextFile(filename: string, contents: string) {
-  const blob = new Blob([contents], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-function makeTempId() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
-
-/** -----------------------------
- *  Types
- *  ----------------------------- */
 type Client = { id: number; name: string | null };
+type Person = { id: number; name: string | null };
 
-type Seller = { id: number; name: string; active?: boolean | null };
+// "name" is what the UI needs. We will map either inventory.item or item_catalog.name into this.
+type Item = { id: number; name: string; cost?: number | null };
 
-type Item = {
-  id: number;
-  name: string;
-  cost: number; // unit cost
+type Line = {
+  itemId: number | null;
+  units: number;
+  price: number; // total price for the line (what you sold it for)
+  fees: number; // optional fees
 };
 
-type SaleLineDraft = {
-  tempId: string;
-  item_id: number | null;
-  qty: number;
-  price: number;
-  fees: number;
-};
-
-type SaleHeader = {
+type RecentSale = {
   id: number;
-  sale_date: string | null;
-  notes: string | null;
-  client_id: number | null;
-  seller_id: number | null;
+  sale_date?: string | null;
   created_at?: string | null;
+  client_name?: string | null;
+  item_name?: string | null;
+  units?: number | null;
+  profit?: number | null;
+  note?: string | null;
 };
 
-type SaleLineRow = {
-  id: number;
-  sale_id: number;
-  item_id: number;
-  qty: number;
-  price: number;
-  fees: number;
-};
+/**
+ * Searchable dropdown (search input appears inside the dropdown)
+ * ✅ FIX: Portal menu + correct "outside click" handling so clicking items works.
+ */
+function ItemSearchDropdown({
+  value,
+  items,
+  placeholder = "Select item",
+  onChange,
+}: {
+  value: number | null;
+  items: Item[];
+  placeholder?: string;
+  onChange: (nextId: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
-/** -----------------------------
- *  Table Auto-Detect
- *  ----------------------------- */
-async function detectFirstWorkingTable(candidates: string[], selectCols: string) {
-  for (const t of candidates) {
-    const res = await supabase.from(t).select(selectCols).limit(1);
-    if (!res.error) return t;
-  }
-  return null;
-}
+  const selected = useMemo(() => items.find((it) => it.id === value) ?? null, [items, value]);
 
-async function detectSalesHeaderTable() {
-  return detectFirstWorkingTable(["sales", "Sales", "SalesHeader", "sale_headers"], "id,sale_date");
-}
+  const filtered = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((it) => (it.name ?? "").toLowerCase().includes(query));
+  }, [items, q]);
 
-async function detectSaleLinesTable() {
-  return detectFirstWorkingTable(
-    ["sale_lines", "Sales", "sales_lines", "sale_items", "sales_items", "line_items"],
-    "id,sale_id,item_id,qty,price,fees"
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number; width: number } | null>(null);
+
+  // ✅ IMPORTANT FIX: treat clicks inside the PORTALED menu as "inside" too
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+
+      const inWrap = wrapRef.current?.contains(t);
+      const inMenu = menuRef.current?.contains(t);
+
+      if (!inWrap && !inMenu) setOpen(false);
+    }
+
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setQ("");
+      setMenuPos(null);
+      return;
+    }
+
+    // focus search
+    setTimeout(() => inputRef.current?.focus(), 0);
+
+    const updatePos = () => {
+      const el = btnRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setMenuPos({ left: r.left, top: r.bottom + 8, width: r.width });
+    };
+
+    updatePos();
+    window.addEventListener("scroll", updatePos, true);
+    window.addEventListener("resize", updatePos);
+    return () => {
+      window.removeEventListener("scroll", updatePos, true);
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [open]);
+
+  const menu =
+    open && menuPos
+      ? createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              left: menuPos.left,
+              top: menuPos.top,
+              width: menuPos.width,
+              zIndex: 999999,
+              borderRadius: 16,
+              border: "1px solid rgba(120,160,255,0.18)",
+              background: "rgba(0,0,0,0.78)",
+              backdropFilter: "blur(14px)",
+              boxShadow: "0 18px 55px rgba(0,0,0,0.45)",
+              overflow: "hidden",
+            }}
+            role="listbox"
+            // extra safety: don't let clicks bubble to anything weird
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <input
+                ref={inputRef}
+                className="input"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search items…"
+                style={{ height: 40, borderRadius: 14 }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
+            <div style={{ maxHeight: 260, overflow: "auto" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(null);
+                  setOpen(false);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: 0,
+                  color: "rgba(255,255,255,0.92)",
+                  cursor: "pointer",
+                }}
+              >
+                {placeholder}
+              </button>
+
+              {filtered.length === 0 ? (
+                <div style={{ padding: "10px 12px", color: "rgba(255,255,255,0.65)" }}>No matches.</div>
+              ) : (
+                filtered.map((it) => (
+                  <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(it.id);
+                      setOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      textAlign: "left",
+                      background: value === it.id ? "rgba(120,160,255,0.14)" : "transparent",
+                      border: 0,
+                      color: "rgba(255,255,255,0.92)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {it.name}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        ref={btnRef}
+        type="button"
+        className="input"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          width: "100%",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span style={{ opacity: selected ? 1 : 0.9 }}>{selected ? selected.name : placeholder}</span>
+        <span style={{ opacity: 0.9 }}>▾</span>
+      </button>
+
+      {menu}
+    </div>
   );
 }
 
-async function detectSellersTable() {
-  return detectFirstWorkingTable(["sales_people", "sale_sellers", "people", "sellers"], "id,name");
-}
-
-async function loadSellersSafe(tableName: string): Promise<Seller[]> {
-  // Try with active first
-  const withActive = await supabase.from(tableName).select("id,name,active").order("name", { ascending: true });
-  if (!withActive.error) {
-    const raw = ((withActive.data as any) ?? []) as any[];
-    return raw
-      .map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: x.active ?? true }))
-      .filter((x) => x.name.trim().length > 0 && x.active !== false);
-  }
-
-  // Fallback: no active column
-  const noActive = await supabase.from(tableName).select("id,name").order("name", { ascending: true });
-  if (noActive.error) {
-    throw new Error(noActive.error.message);
-  }
-  const raw = ((noActive.data as any) ?? []) as any[];
-  return raw
-    .map((x) => ({ id: Number(x.id), name: String(x.name ?? ""), active: true }))
-    .filter((x) => x.name.trim().length > 0);
-}
-
-/** -----------------------------
- *  Component
- *  ----------------------------- */
 export default function Sales() {
-  // detected table names
-  const [tSales, setTSales] = useState<string | null>(null);
-  const [tLines, setTLines] = useState<string | null>(null);
-  const [tSellers, setTSellers] = useState<string | null>(null);
-
-  // master data
   const [clients, setClients] = useState<Client[]>([]);
-  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [items, setItems] = useState<Item[]>([]);
 
-  // add-sale form
-  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
-  const [selectedSellerId, setSelectedSellerId] = useState<number | null>(null);
-  const [saleDate, setSaleDate] = useState<string>(todayISO());
-  const [saleNote, setSaleNote] = useState<string>("");
+  const [clientId, setClientId] = useState<number | null>(null);
+  const [sellerId, setSellerId] = useState<number | null>(null);
 
-  const [lines, setLines] = useState<SaleLineDraft[]>([
-    { tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 },
-  ]);
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const [lines, setLines] = useState<Line[]>([{ itemId: null, units: 1, price: 0, fees: 0 }]);
 
-  // sales list
-  const [sales, setSales] = useState<(SaleHeader & { lines: SaleLineRow[] })[]>([]);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  // filters
-  const now = new Date();
-  const [filterMode, setFilterMode] = useState<"day" | "month" | "year" | "all">("all");
-  const [filterYear, setFilterYear] = useState<number>(now.getFullYear());
-  const [filterMonth, setFilterMonth] = useState<number>(now.getMonth() + 1);
-  const [filterDay, setFilterDay] = useState<number>(now.getDate());
-  const [filterSellerId, setFilterSellerId] = useState<number | "all">("all");
+  const [recent, setRecent] = useState<RecentSale[]>([]);
+  const [year, setYear] = useState<string>("All time");
+  const [month, setMonth] = useState<string>("All time");
+  const [day, setDay] = useState<string>("");
 
-  const itemById = useMemo(() => {
-    const m = new Map<number, Item>();
-    for (const it of items) m.set(it.id, it);
-    return m;
-  }, [items]);
-
-  const sellerById = useMemo(() => {
-    const m = new Map<number, Seller>();
-    for (const s of sellers) m.set(s.id, s);
-    return m;
-  }, [sellers]);
-
-  const clientById = useMemo(() => {
-    const m = new Map<number, Client>();
-    for (const c of clients) m.set(c.id, c);
-    return m;
-  }, [clients]);
-
-  const yearsOptions = useMemo(() => {
-    const yNow = new Date().getFullYear();
-    const ys: number[] = [];
-    for (let y = yNow - 5; y <= yNow + 1; y++) ys.push(y);
-    return ys;
-  }, []);
-
-  const daysInMonth = useMemo(() => {
-    const dt = new Date(filterYear, filterMonth, 0);
-    const n = dt.getDate();
-    return Array.from({ length: n }, (_, i) => i + 1);
-  }, [filterYear, filterMonth]);
-
-  /** -----------------------------
-   *  Load / Detect on Mount
-   *  ----------------------------- */
+  // ✅ inventory is PRIMARY (this is where your items are)
   useEffect(() => {
-    (async () => {
+    const load = async () => {
       setErr("");
+      try {
+        const [c, p] = await Promise.all([
+          supabase.from("clients").select("id,name").order("name", { ascending: true }),
+          supabase.from("sales_people").select("id,name").order("name", { ascending: true }),
+        ]);
 
-      const [salesTable, linesTable, sellersTable] = await Promise.all([
-        detectSalesHeaderTable(),
-        detectSaleLinesTable(),
-        detectSellersTable(),
-      ]);
+        if (c.error) throw c.error;
+        if (p.error) throw p.error;
 
-      setTSales(salesTable);
-      setTLines(linesTable);
-      setTSellers(sellersTable);
+        let loadedItems: Item[] = [];
 
-      // clients
-      const cRes = await supabase.from("clients").select("id,name").order("name", { ascending: true });
-      if (cRes.error) setErr(`Clients error: ${cRes.error.message}`);
-      setClients(((cRes.data as any) ?? []) as Client[]);
+        // 1) PRIMARY: inventory (id, item, cost)
+        const inv = await supabase.from("inventory").select("id,item,cost").order("item", { ascending: true });
+        if (inv.error) throw inv.error;
 
-      // items
-      const iRes = await supabase.from("item_catalog").select("id,name,cost").order("name", { ascending: true });
-      if (iRes.error) setErr((e) => e || `Item catalog error: ${iRes.error.message}`);
-      const rawItems = (((iRes.data as any) ?? []) as any[]).map((x) => ({
-        id: Number(x.id),
-        name: String(x.name ?? ""),
-        cost: safeNum(x.cost),
-      }));
-      setItems(rawItems.filter((x) => x.name.trim().length > 0));
+        if (Array.isArray(inv.data) && inv.data.length > 0) {
+          loadedItems = (inv.data as any[]).map((r) => ({
+            id: Number(r.id),
+            name: String(r.item ?? "").trim(),
+            cost: r.cost ?? null,
+          }));
+        } else {
+          // 2) fallback: item_catalog
+          const cat = await supabase.from("item_catalog").select("id,name,cost").order("name", { ascending: true });
+          if (cat.error) throw cat.error;
 
-      // sellers
-      if (sellersTable) {
-        try {
-          const s = await loadSellersSafe(sellersTable);
-          setSellers(s);
-        } catch (e: any) {
-          setErr((prev) => prev || `Sellers error: ${e?.message ?? String(e)}`);
-          setSellers([]);
+          loadedItems = (cat.data as any[]).map((r) => ({
+            id: Number(r.id),
+            name: String(r.name ?? "").trim(),
+            cost: r.cost ?? null,
+          }));
         }
-      } else {
-        setSellers([]);
+
+        loadedItems = loadedItems
+          .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        setClients((c.data as any) ?? []);
+        setPeople((p.data as any) ?? []);
+        setItems(loadedItems);
+
+        console.log("Loaded items:", loadedItems.length, loadedItems.slice(0, 10));
+      } catch (e: any) {
+        setErr(e?.message ?? String(e));
       }
-    })();
+    };
+
+    void load();
   }, []);
 
-  /** -----------------------------
-   *  Line helpers
-   *  ----------------------------- */
-  function addLine() {
-    setLines((prev) => [...prev, { tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 }]);
-  }
-  function removeLine(tempId: string) {
-    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((x) => x.tempId !== tempId)));
-  }
-  function updateLine(tempId: string, patch: Partial<SaleLineDraft>) {
-    setLines((prev) => prev.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
-  }
-
+  // ✅ Profit math: price - fees - (cost * units)
   const formProfit = useMemo(() => {
-    let total = 0;
-    for (const ln of lines) {
-      if (!ln.item_id) continue;
-      const it = itemById.get(ln.item_id);
-      const unitCost = safeNum(it?.cost);
-      const qty = Math.max(0, safeNum(ln.qty));
-      const price = safeNum(ln.price);
-      const fees = safeNum(ln.fees);
-      total += price - fees - unitCost * qty;
-    }
-    return total;
-  }, [lines, itemById]);
+    return lines.reduce((sum, l) => {
+      const item = items.find((i) => i.id === l.itemId);
+      const cost = Number(item?.cost ?? 0);
+      const units = Number(l.units ?? 0);
+      const price = Number(l.price ?? 0);
+      const fees = Number(l.fees ?? 0);
+      return sum + (price - fees - cost * units);
+    }, 0);
+  }, [lines, items]);
 
-  /** -----------------------------
-   *  Fetch sales list
-   *  ----------------------------- */
-  async function fetchSales() {
-    if (!tSales) return setErr("Could not detect your Sales header table. (Expected column: sale_date)");
-    if (!tLines) return setErr("Could not detect your Sale lines table. (Expected columns: sale_id,item_id,qty,price,fees)");
+  const totalProfitAllTime = useMemo(() => {
+    const hasProfit = recent.some((r) => typeof r.profit === "number");
+    if (!hasProfit) return null;
+    return recent.reduce((s, r) => s + Number(r.profit ?? 0), 0);
+  }, [recent]);
 
+  function setLine(i: number, patch: Partial<Line>) {
+    setLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  }
+
+  function addLine() {
+    setLines((prev) => [...prev, { itemId: null, units: 1, price: 0, fees: 0 }]);
+  }
+
+  function removeLine(i: number) {
+    setLines((prev) => {
+      const next = prev.filter((_, idx) => idx !== i);
+      return next.length ? next : [{ itemId: null, units: 1, price: 0, fees: 0 }];
+    });
+  }
+
+  async function loadRecent() {
     setLoading(true);
     setErr("");
+    try {
+      const fallback = await supabase
+        .from("sales")
+        .select("id,sale_date,created_at,notes")
+        .order("sale_date", { ascending: false })
+        .limit(200);
 
-    let start: string | null = null;
-    let endExclusive: string | null = null;
+      if (fallback.error) throw fallback.error;
 
-    if (filterMode === "day") {
-      const y = filterYear,
-        m = filterMonth,
-        d = filterDay;
-      start = `${y}-${pad2(m)}-${pad2(d)}`;
-      const dt = new Date(y, m - 1, d);
-      dt.setDate(dt.getDate() + 1);
-      endExclusive = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
-    } else if (filterMode === "month") {
-      const y = filterYear,
-        m = filterMonth;
-      start = `${y}-${pad2(m)}-01`;
-      const dt = new Date(y, m - 1, 1);
-      dt.setMonth(dt.getMonth() + 1);
-      endExclusive = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
-    } else if (filterMode === "year") {
-      const y = filterYear;
-      start = `${y}-01-01`;
-      endExclusive = `${y + 1}-01-01`;
-    }
+      const mapped: RecentSale[] = ((fallback.data as any[]) ?? []).map((r) => ({
+        id: r.id,
+        sale_date: r.sale_date ?? null,
+        created_at: r.created_at ?? null,
+        note: r.notes ?? null,
+      }));
 
-    let q = supabase
-      .from(tSales)
-      .select("id,sale_date,notes,client_id,seller_id,created_at")
-      .order("sale_date", { ascending: false })
-      .limit(500);
-
-    if (start) q = q.gte("sale_date", start);
-    if (endExclusive) q = q.lt("sale_date", endExclusive);
-    if (filterSellerId !== "all") q = q.eq("seller_id", filterSellerId);
-
-    const sRes = await q;
-    if (sRes.error) {
-      setErr(`Sales load error (${tSales}): ${sRes.error.message}`);
-      setSales([]);
+      setRecent(mapped);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const headers: SaleHeader[] = ((sRes.data as any) ?? []) as any[];
-    const saleIds = headers.map((x) => x.id);
-
-    let lineRows: SaleLineRow[] = [];
-    if (saleIds.length) {
-      const lRes = await supabase.from(tLines).select("id,sale_id,item_id,qty,price,fees").in("sale_id", saleIds);
-      if (lRes.error) {
-        setErr(`Sale lines load error (${tLines}): ${lRes.error.message}`);
-      } else {
-        lineRows = (((lRes.data as any) ?? []) as any[]).map((x) => ({
-          id: x.id,
-          sale_id: x.sale_id,
-          item_id: x.item_id,
-          qty: safeNum(x.qty),
-          price: safeNum(x.price),
-          fees: safeNum(x.fees),
-        }));
-      }
-    }
-
-    const bySale = new Map<number, SaleLineRow[]>();
-    for (const ln of lineRows) {
-      const arr = bySale.get(ln.sale_id) ?? [];
-      arr.push(ln);
-      bySale.set(ln.sale_id, arr);
-    }
-
-    setSales(headers.map((h) => ({ ...h, lines: bySale.get(h.id) ?? [] })));
-    setLoading(false);
   }
 
   useEffect(() => {
-    if (!tSales || !tLines) return;
-    void fetchSales();
+    void loadRecent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tSales, tLines]);
+  }, []);
 
-  /** -----------------------------
-   *  Save sale
-   *  ----------------------------- */
-  async function saveSale() {
-    if (!tSales) return setErr("Could not detect your Sales header table.");
-    if (!tLines) return setErr("Could not detect your Sale lines table.");
-
-    setSaving(true);
-    setErr("");
-
-    const validLines = lines.filter((l) => l.item_id && safeNum(l.qty) > 0);
-    if (!validLines.length) {
-      setErr("Add at least one item (with qty > 0).");
-      setSaving(false);
-      return;
+  const years = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of recent) {
+      const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
+      if (d && d.length >= 4) s.add(d.slice(0, 4));
     }
+    return ["All time", ...Array.from(s).sort((a, b) => b.localeCompare(a))];
+  }, [recent]);
 
-    try {
-      const headerPayload = {
-        sale_date: saleDate,
-        notes: saleNote.trim() ? saleNote.trim() : null,
-        client_id: selectedClientId,
-        seller_id: selectedSellerId,
-      };
-
-      const ins = await supabase.from(tSales).insert([headerPayload]).select("id").single();
-      if (ins.error) throw new Error(ins.error.message);
-
-      const saleId = ins.data.id as number;
-
-      const linePayload = validLines.map((l) => ({
-        sale_id: saleId,
-        item_id: l.item_id,
-        qty: safeNum(l.qty),
-        price: safeNum(l.price),
-        fees: safeNum(l.fees),
-      }));
-
-      const lIns = await supabase.from(tLines).insert(linePayload);
-      if (lIns.error) throw new Error(lIns.error.message);
-
-      setSelectedClientId(null);
-      setSelectedSellerId(null);
-      setSaleDate(todayISO());
-      setSaleNote("");
-      setLines([{ tempId: makeTempId(), item_id: null, qty: 1, price: 0, fees: 0 }]);
-
-      await fetchSales();
-    } catch (e: any) {
-      setErr(`Save error: ${e?.message ?? String(e)}`);
-    } finally {
-      setSaving(false);
+  const months = useMemo(() => {
+    if (year === "All time") return ["All time"];
+    const s = new Set<string>();
+    for (const r of recent) {
+      const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
+      if (d.startsWith(year + "-")) s.add(d.slice(5, 7));
     }
-  }
+    return ["All time", ...Array.from(s).sort((a, b) => b.localeCompare(a))];
+  }, [recent, year]);
 
-  /** -----------------------------
-   *  Delete sale
-   *  ----------------------------- */
-  async function deleteSale(saleId: number) {
-    if (!tSales || !tLines) return;
+  const filteredRecent = useMemo(() => {
+    return recent.filter((r) => {
+      const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
+      if (!d) return false;
+      if (day) return d === day;
+      if (year !== "All time" && d.slice(0, 4) !== year) return false;
+      if (month !== "All time" && d.slice(5, 7) !== month) return false;
+      return true;
+    });
+  }, [recent, year, month, day]);
 
-    const ok = window.confirm("Delete this sale? (Cannot be undone)");
+  async function deleteSale(id: number) {
+    const ok = confirm("Delete this sale?");
     if (!ok) return;
 
     setErr("");
     try {
-      const dl1 = await supabase.from(tLines).delete().eq("sale_id", saleId);
-      if (dl1.error) throw new Error(dl1.error.message);
-
-      const dl2 = await supabase.from(tSales).delete().eq("id", saleId);
-      if (dl2.error) throw new Error(dl2.error.message);
-
-      await fetchSales();
+      const del = await supabase.from("sales").delete().eq("id", id);
+      if (del.error) throw del.error;
+      await loadRecent();
     } catch (e: any) {
-      setErr(`Delete error: ${e?.message ?? String(e)}`);
+      setErr(e?.message ?? String(e));
     }
   }
 
-  /** -----------------------------
-   *  Compute profit/unit list
-   *  ----------------------------- */
-  const salesWithComputed = useMemo(() => {
-    return sales.map((s) => {
-      let profit = 0;
-      let units = 0;
+  async function saveSale() {
+    if (!date) return alert("Please choose a date.");
+    if (!lines.length) return alert("Add at least one line.");
+    if (lines.some((l) => !l.itemId)) return alert("Please select an item for every line.");
 
-      for (const ln of s.lines) {
-        const it = itemById.get(ln.item_id);
-        const unitCost = safeNum(it?.cost);
-        const qty = safeNum(ln.qty);
-        const price = safeNum(ln.price);
-        const fees = safeNum(ln.fees);
-        profit += price - fees - unitCost * qty;
-        units += qty;
+    setLoading(true);
+    setErr("");
+    try {
+      const saleInsert = await supabase
+        .from("sales")
+        .insert([
+          {
+            sale_date: date,
+            client_id: clientId,
+            seller_id: sellerId,
+            notes: note || null,
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (saleInsert.error) throw saleInsert.error;
+
+      const saleId = (saleInsert.data as any)?.id;
+      if (!saleId) throw new Error("Sale saved, but no sale ID returned.");
+
+      const linesPayload = lines.map((l) => ({
+        sale_id: saleId,
+        item_id: l.itemId,
+        units: Number(l.units || 0),
+        price: Number(l.price || 0),
+        fees: Number(l.fees || 0),
+      }));
+
+      const lineInsert = await supabase.from("sale_lines").insert(linesPayload);
+      if (lineInsert.error) {
+        console.warn("sale_lines insert failed (table may not exist):", lineInsert.error.message);
       }
 
-      return { ...s, profit, units };
-    });
-  }, [sales, itemById]);
+      setClientId(null);
+      setSellerId(null);
+      setDate(new Date().toISOString().slice(0, 10));
+      setNote("");
+      setLines([{ itemId: null, units: 1, price: 0, fees: 0 }]);
 
-  const loadedProfit = useMemo(() => salesWithComputed.reduce((a, s: any) => a + safeNum(s.profit), 0), [salesWithComputed]);
-
-  /** -----------------------------
-   *  Export CSV (loaded view)
-   *  ----------------------------- */
-  function exportCSV() {
-    const header = ["Sale Date", "Client", "Seller", "Items", "Units", "Revenue", "Fees", "Cost", "Profit", "Note"];
-    const out: string[] = [header.map(csvEscape).join(",")];
-
-    for (const s of salesWithComputed as any[]) {
-      const clientName = s.client_id ? (clientById.get(s.client_id)?.name ?? "") : "";
-      const sellerName = s.seller_id ? (sellerById.get(s.seller_id)?.name ?? "") : "";
-
-      const itemsList = s.lines
-        .map((ln: any) => {
-          const nm = itemById.get(ln.item_id)?.name ?? `Item#${ln.item_id}`;
-          return `${nm} (${safeNum(ln.qty)})`;
-        })
-        .join(" | ");
-
-      const revenue = s.lines.reduce((a: number, ln: any) => a + safeNum(ln.price), 0);
-      const fees = s.lines.reduce((a: number, ln: any) => a + safeNum(ln.fees), 0);
-      const cost = s.lines.reduce(
-        (a: number, ln: any) => a + safeNum(itemById.get(ln.item_id)?.cost) * safeNum(ln.qty),
-        0
-      );
-
-      out.push(
-        [
-          s.sale_date ?? "",
-          clientName ?? "",
-          sellerName ?? "",
-          itemsList,
-          s.units ?? 0,
-          revenue,
-          fees,
-          cost,
-          s.profit ?? 0,
-          s.notes ?? "",
-        ]
-          .map(csvEscape)
-          .join(",")
-      );
+      await loadRecent();
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
     }
-
-    let label = "all";
-    if (filterMode === "day") label = `${filterYear}-${pad2(filterMonth)}-${pad2(filterDay)}`;
-    if (filterMode === "month") label = `${filterYear}-${pad2(filterMonth)}`;
-    if (filterMode === "year") label = `${filterYear}`;
-    downloadTextFile(`sales_export_${label}.csv`, out.join("\n"));
   }
 
   return (
-    <div className="salesPage">
+    <div className="page salesNebula">
       <style>{`
-        .salesPage{
+        .salesNebula{
+          position: relative;
+          isolation: isolate;
+          padding-bottom: 20px;
+        }
+        .salesNebula:before{
+          content:"";
+          position: fixed;
+          inset: 0;
+          pointer-events:none;
+          z-index: 0;
+          background:
+            radial-gradient(820px 420px at 10% 12%, rgba(90,140,255,0.14), transparent 60%),
+            radial-gradient(560px 420px at 90% 14%, rgba(152,90,255,0.14), transparent 55%),
+            radial-gradient(720px 520px at 75% 35%, rgba(212,175,55,0.08), transparent 60%),
+            radial-gradient(900px 560px at 50% 98%, rgba(0,0,0,0.88), transparent 55%),
+            linear-gradient(180deg, rgba(0,0,0,0.40), rgba(0,0,0,0.88));
+          opacity: .98;
+        }
+        .salesNebula > *{ position: relative; z-index: 1; }
+
+        .salesHeader{
+          display:flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .salesTitle h1{ margin:0; font-size: 28px; letter-spacing: .2px; }
+        .salesTitle .muted{ margin-top: 6px; }
+
+        .salesCard{
+          margin-top: 12px;
+          border-radius: 18px;
+          border: 1px solid rgba(120,160,255,0.14);
+          background: rgba(0,0,0,0.36);
+          backdrop-filter: blur(12px);
+          box-shadow: 0 18px 55px rgba(0,0,0,0.32);
           padding: 14px;
-          max-width: 1200px;
-          margin: 0 auto;
-          color: rgba(255,255,255,0.92);
         }
 
         .topRow{
           display:flex;
-          align-items:flex-start;
-          justify-content:space-between;
-          gap:12px;
-          flex-wrap:wrap;
-          margin-bottom:12px;
-        }
-        .title{
-          font-size: 28px;
-          font-weight: 950;
-          letter-spacing: .2px;
-          margin: 0;
-        }
-        .sub{
-          opacity:.85;
-          margin-top:6px;
-          font-size: 14px;
-        }
-
-        .btn{
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(20,20,28,.55);
-          color:#fff;
-          padding:10px 14px;
-          border-radius:14px;
-          font-weight:900;
-          cursor:pointer;
-          white-space:nowrap;
-        }
-        .btn:active{ transform: scale(.99); }
-        .btnPrimary{
-          background: rgba(118, 68, 255, .18);
-          border-color: rgba(130, 90, 255, .35);
-        }
-        .btnDanger{
-          background: rgba(255, 80, 80, .12);
-          border-color: rgba(255, 80, 80, .28);
-        }
-
-        .pill{
-          display:inline-flex;
-          align-items:center;
-          gap:8px;
-          padding:6px 10px;
-          border-radius:999px;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.18);
-          font-size: 12px;
-          font-weight:950;
-          color: #ffd77a;
-        }
-
-        .card{
-          border:1px solid rgba(255,255,255,.10);
-          background: linear-gradient(180deg, rgba(18,18,28,.72), rgba(10,10,16,.72));
-          border-radius: 18px;
-          padding: 14px;
-          box-shadow: 0 10px 40px rgba(0,0,0,.35);
-          backdrop-filter: blur(10px);
-        }
-        .cardHeader{
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap:12px;
-          flex-wrap:wrap;
-          margin-bottom: 10px;
-        }
-        .cardTitle{
-          font-size: 18px;
-          font-weight: 950;
-          margin: 0;
-        }
-
-        .grid{
-          display:grid;
-          grid-template-columns: 1fr;
+          justify-content: space-between;
+          align-items: center;
           gap: 10px;
-        }
-        .row2{
-          display:grid;
-          grid-template-columns: 1fr;
-          gap: 10px;
+          flex-wrap: wrap;
         }
 
-        .field label{
-          display:block;
-          font-size:12px;
-          opacity:.85;
-          margin-bottom:6px;
-          font-weight:950;
-        }
-
-        .input, .select{
-          width:100%;
-          border-radius: 16px;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(10,10,18,.55);
-          color:#fff;
-          padding: 12px 12px;
-          outline:none;
-          font-weight:900;
-          line-height: 1.1;
-          height: 46px;
-          font-size: 16px; /* iOS zoom fix */
-        }
-
-        .muted{
-          opacity:.75;
-          font-size:12px;
-          margin-top:6px;
-        }
-
-        .lines{
-          margin-top: 12px;
-          display:flex;
-          flex-direction:column;
-          gap:10px;
-        }
-        .line{
-          border:1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.16);
-          border-radius: 16px;
-          padding: 10px;
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap:10px;
-          align-items:end;
-        }
-        .line .itemField{ grid-column: 1 / -1; }
-        .line .feesField{ grid-column: 1 / 2; }
-        .line .removeField{ grid-column: 2 / 3; display:flex; justify-content:flex-end; }
-        .xBtn{
-          width:46px;
-          height:46px;
-          border-radius: 16px;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.22);
-          color:#fff;
-          font-size:20px;
-          cursor:pointer;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-        }
-        .profitMini{
-          margin-top: 6px;
+        .pillGold{
           font-size: 12px;
-          opacity: .85;
           font-weight: 950;
-        }
-
-        .bottomActions{
-          display:flex;
-          gap:10px;
-          flex-wrap:wrap;
-          margin-top: 10px;
-        }
-
-        .filters{
-          display:flex;
-          gap:10px;
-          flex-wrap:wrap;
-          align-items:flex-end;
-        }
-        .seg{
-          display:flex;
-          gap:8px;
-          flex-wrap:wrap;
-        }
-        .seg button{
-          padding:8px 12px;
+          padding: 7px 10px;
           border-radius: 999px;
-          border:1px solid rgba(255,255,255,.12);
-          background: rgba(0,0,0,.18);
-          color:#fff;
-          font-weight:950;
-          cursor:pointer;
-        }
-        .seg button.active{
-          border-color: rgba(130, 90, 255, .45);
-          background: rgba(118, 68, 255, .20);
+          border: 1px solid rgba(212,175,55,0.22);
+          background: rgba(212,175,55,0.10);
+          color: rgba(255,255,255,0.88);
+          white-space: nowrap;
         }
 
-        .tableWrap{
-          overflow:auto;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,.10);
-          background: rgba(0,0,0,.10);
+        .clientRow{
+          display:grid;
+          grid-template-columns: 1fr auto;
+          gap: 10px;
+          margin-top: 12px;
+          align-items: stretch;
         }
-        table{
-          width:100%;
-          border-collapse: collapse;
-          min-width: 860px;
-        }
-        th, td{
-          padding: 12px;
-          text-align:left;
-          border-bottom: 1px solid rgba(255,255,255,.08);
-          vertical-align: top;
-          font-weight: 900;
-        }
-        th{
+
+        .label{
           font-size: 12px;
-          opacity: .85;
-          font-weight: 950;
-        }
-        td{
-          font-size: 14px;
+          font-weight: 900;
+          color: rgba(255,255,255,0.55);
+          margin-bottom: 6px;
         }
 
-        @media (min-width: 820px){
-          .row2{ grid-template-columns: 1fr 1fr; }
-          .line{
-            grid-template-columns: 1.25fr .55fr .75fr .75fr auto;
-            align-items:end;
-          }
-          .line .itemField{ grid-column: auto; }
-          .line .feesField{ grid-column: auto; }
-          .line .removeField{ grid-column: auto; }
+        .lineHeader{
+          display:grid;
+          grid-template-columns: 1.8fr 0.7fr 0.9fr 0.9fr auto;
+          gap: 10px;
+          margin-top: 14px;
+          padding: 0 2px;
+          color: rgba(255,255,255,0.78);
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: .15px;
+          text-shadow: 0 1px 10px rgba(0,0,0,0.55);
         }
+
+        .lineRow{
+          display:grid;
+          grid-template-columns: 1.8fr 0.7fr 0.9fr 0.9fr auto;
+          gap: 10px;
+          margin-top: 10px;
+          align-items: center;
+        }
+
+        .xBtn{
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.05);
+          color: rgba(255,255,255,0.9);
+          font-weight: 950;
+          cursor: pointer;
+        }
+
+        .lineProfit{
+          margin-top: 8px;
+          font-size: 12px;
+          color: rgba(255,255,255,0.65);
+        }
+
+        .actionsRow{
+          display:flex;
+          gap: 10px;
+          margin-top: 12px;
+          flex-wrap: wrap;
+        }
+
+        .recentWrap{
+          margin-top: 14px;
+        }
+        .recentHeader{
+          display:flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .filters{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+          width: min(520px, 100%);
+        }
+        .filters .input{ height: 44px; border-radius: 16px; }
+
+        .salesTable{
+          margin-top: 12px;
+          overflow: hidden;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.30);
+        }
+        .salesTableHead, .salesTableRow{
+          display:grid;
+          grid-template-columns: 160px 140px 1fr 110px 120px 1.2fr 120px;
+          gap: 10px;
+          padding: 12px 12px;
+          align-items: center;
+        }
+        .salesTableHead{
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(255,255,255,0.55);
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .salesTableRow{
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.88);
+        }
+        .salesTableRow:last-child{ border-bottom: 0; }
+
+        .right{ text-align: right; }
+        .bold{ font-weight: 950; }
+
+        @media (max-width: 900px){
+          .salesTableHead{ display:none; }
+          .salesTableRow{
+            grid-template-columns: 1fr;
+            gap: 6px;
+          }
+          .salesTableRow > div{
+            display:flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 13px;
+          }
+          .salesTableRow > div:before{
+            content: attr(data-k);
+            color: rgba(255,255,255,0.55);
+            font-weight: 900;
+          }
+        }
+
+        @media (max-width: 720px){
+          .lineHeader{
+            display:grid;
+            grid-template-columns: 1.55fr 0.65fr 0.9fr 0.9fr auto;
+            gap: 8px;
+            font-size: 11px;
+          }
+
+          .lineRow{
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+          .xBtn{
+            width: 100%;
+            height: 44px;
+          }
+        }
+
+        input, select, textarea { font-size: 16px; }
       `}</style>
 
-      <div className="topRow">
-        <div>
-          <h1 className="title">Sales</h1>
-          <div className="sub">
-            Loaded profit: <b>{money(loadedProfit)}</b>
-          </div>
-          <div className="muted" style={{ marginTop: 6 }}>
-            Tables → items: <b>item_catalog</b>, sales: <b>{tSales ?? "detecting..."}</b>, lines:{" "}
-            <b>{tLines ?? "detecting..."}</b>, sellers: <b>{tSellers ?? "detecting..."}</b>
+      <div className="salesHeader">
+        <div className="salesTitle">
+          <h1>Sales</h1>
+          <div className="muted">
+            {totalProfitAllTime == null
+              ? `Total profit (all time): $${(0).toFixed(2)}`
+              : `Total profit (all time): $${totalProfitAllTime.toFixed(2)}`}
           </div>
         </div>
 
-        <button className="btn" onClick={fetchSales} disabled={loading}>
-          {loading ? "Refreshing..." : "Refresh"}
+        <button className="btn" type="button" onClick={() => void loadRecent()} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
         </button>
       </div>
 
       {err ? (
-        <div className="card" style={{ borderColor: "rgba(255,80,80,.35)", marginBottom: 12 }}>
-          <b style={{ color: "#ff9a9a" }}>Error:</b> <span style={{ opacity: 0.9 }}>{err}</span>
+        <div className="card" style={{ padding: 12, marginTop: 12, borderColor: "rgba(255,100,100,0.35)" }}>
+          <b style={{ color: "salmon" }}>Error:</b> {err}
         </div>
       ) : null}
 
-      <div className="card">
-        <div className="cardHeader">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h2 className="cardTitle">Add Sale</h2>
-            <span className="pill">Form profit: {money(formProfit)}</span>
-          </div>
+      <div className="salesCard">
+        <div className="topRow">
+          <h2 style={{ margin: 0 }}>Add Sale</h2>
+          <span className="pillGold">Form profit: ${formProfit.toFixed(2)}</span>
         </div>
 
-        <div className="grid">
-          <div className="field">
-            <label>Client (optional)</label>
+        <div style={{ marginTop: 12 }}>
+          <div className="label">Date</div>
+          <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div className="label">Client (optional)</div>
+          <div className="clientRow">
             <select
-              className="select"
-              value={selectedClientId ?? ""}
-              onChange={(e) => setSelectedClientId(e.target.value ? Number(e.target.value) : null)}
+              className="input"
+              value={clientId ?? ""}
+              onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : null)}
             >
               <option value="">No client selected</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name ?? "Unnamed client"}
+                  {c.name ?? "Unnamed"}
                 </option>
               ))}
             </select>
-            <div className="muted">Clients come from your Clients page/table.</div>
-          </div>
 
-          <div className="row2">
-            <div className="field">
-              <label>Date</label>
-              <input className="input" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
+            <Link className="btn primary" to="/clients">
+              + New Client
+            </Link>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div className="label">Salesperson</div>
+          <select
+            className="input"
+            value={sellerId ?? ""}
+            onChange={(e) => setSellerId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Select…</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name ?? "Unnamed"}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div className="label">Note (optional, applies to all lines)</div>
+          <input
+            className="input"
+            placeholder="Optional note for the whole sale…"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
+
+        <div className="lineHeader">
+          <div>Item</div>
+          <div>Units</div>
+          <div>Sale Price</div>
+          <div>Fees</div>
+          <div className="right">Remove</div>
+        </div>
+
+        {lines.map((l, i) => {
+          const item = items.find((x) => x.id === l.itemId);
+          const cost = Number(item?.cost ?? 0);
+          const profit = Number(l.price ?? 0) - Number(l.fees ?? 0) - cost * Number(l.units ?? 0);
+
+          return (
+            <div key={i} style={{ marginTop: 10 }}>
+              <div className="lineRow">
+                <ItemSearchDropdown
+                  value={l.itemId}
+                  items={items}
+                  placeholder="Select item"
+                  onChange={(nextId) => setLine(i, { itemId: nextId })}
+                />
+
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  value={l.units}
+                  onChange={(e) => setLine(i, { units: Math.max(1, Number(e.target.value || 1)) })}
+                />
+
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  value={l.price}
+                  onChange={(e) => setLine(i, { price: Math.max(0, Number(e.target.value || 0)) })}
+                  placeholder="Total sale $"
+                />
+
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  value={l.fees}
+                  onChange={(e) => setLine(i, { fees: Math.max(0, Number(e.target.value || 0)) })}
+                  placeholder="Fees $"
+                />
+
+                <button className="xBtn" type="button" onClick={() => removeLine(i)} title="Remove line">
+                  ✕
+                </button>
+              </div>
+
+              <div className="lineProfit">Line profit ${profit.toFixed(2)}</div>
             </div>
+          );
+        })}
 
-            <div className="field">
-              <label>Salesperson (optional)</label>
-              <select
-                className="select"
-                value={selectedSellerId ?? ""}
-                onChange={(e) => setSelectedSellerId(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">No salesperson selected</option>
-                {sellers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <div className="muted">Sellers auto-detected from sales_people / sale_sellers.</div>
-            </div>
-          </div>
-
-          <div className="field">
-            <label>Note (optional, applies to all lines)</label>
-            <input
-              className="input"
-              placeholder="Optional note for the whole sale..."
-              value={saleNote}
-              onChange={(e) => setSaleNote(e.target.value)}
-            />
-          </div>
-
-          <div className="lines">
-            {lines.map((ln) => {
-              const it = ln.item_id ? itemById.get(ln.item_id) : null;
-              const unitCost = safeNum(it?.cost);
-              const qty = Math.max(0, safeNum(ln.qty));
-              const price = safeNum(ln.price);
-              const fees = safeNum(ln.fees);
-              const profit = ln.item_id ? price - fees - unitCost * qty : 0;
-
-              return (
-                <div className="line" key={ln.tempId}>
-                  <div className="field itemField">
-                    <label>Item</label>
-                    <select
-                      className="select"
-                      value={ln.item_id ?? ""}
-                      onChange={(e) =>
-                        updateLine(ln.tempId, { item_id: e.target.value ? Number(e.target.value) : null })
-                      }
-                    >
-                      <option value="">Select...</option>
-                      {items.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="muted">
-                      Cost: <b>{money(unitCost)}</b> (from item_catalog)
-                    </div>
-                  </div>
-
-                  <div className="field">
-                    <label>Units</label>
-                    <input
-                      className="input"
-                      inputMode="numeric"
-                      value={ln.qty}
-                      onChange={(e) => updateLine(ln.tempId, { qty: safeNum(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label>Total price ($)</label>
-                    <input
-                      className="input"
-                      inputMode="decimal"
-                      value={ln.price}
-                      onChange={(e) => updateLine(ln.tempId, { price: safeNum(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="field feesField">
-                    <label>Fees ($)</label>
-                    <input
-                      className="input"
-                      inputMode="decimal"
-                      value={ln.fees}
-                      onChange={(e) => updateLine(ln.tempId, { fees: safeNum(e.target.value) })}
-                    />
-                    <div className="profitMini">
-                      Line profit: <b>{money(profit)}</b>
-                    </div>
-                  </div>
-
-                  <div className="removeField">
-                    <button className="xBtn" onClick={() => removeLine(ln.tempId)} title="Remove line">
-                      ×
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div className="bottomActions">
-              <button className="btn" onClick={addLine}>
-                + Add line
-              </button>
-              <button className="btn btnPrimary" onClick={saveSale} disabled={saving}>
-                {saving ? "Saving..." : "Save Sale"}
-              </button>
-            </div>
-          </div>
+        <div className="actionsRow">
+          <button className="btn" type="button" onClick={addLine}>
+            + Add line
+          </button>
+          <button className="btn primary" type="button" onClick={() => void saveSale()} disabled={loading}>
+            {loading ? "Saving…" : "Save Sale"}
+          </button>
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 14 }}>
-        <div className="cardHeader">
-          <div>
-            <h2 className="cardTitle" style={{ marginBottom: 4 }}>
-              Recent Sales
-            </h2>
-            <div className="muted">Filter by Day / Month / Year. Export what you’re viewing.</div>
-          </div>
+      <div className="salesCard recentWrap">
+        <div className="recentHeader">
+          <h2 style={{ margin: 0 }}>Recent Sales</h2>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span className="pill">Loaded profit: {money(loadedProfit)}</span>
-            <button className="btn" onClick={exportCSV} disabled={loading}>
-              Export CSV
-            </button>
-          </div>
-        </div>
-
-        <div className="filters" style={{ marginBottom: 12 }}>
-          <div>
-            <div className="muted" style={{ marginBottom: 6, fontWeight: 950 }}>
-              Range
+          <div className="filters">
+            <div>
+              <div className="label" style={{ textAlign: "right" }}>
+                Choose year
+              </div>
+              <select
+                className="input"
+                value={year}
+                onChange={(e) => {
+                  setYear(e.target.value);
+                  setMonth("All time");
+                  setDay("");
+                }}
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="seg">
-              <button className={filterMode === "all" ? "active" : ""} onClick={() => setFilterMode("all")}>
-                All
-              </button>
-              <button className={filterMode === "day" ? "active" : ""} onClick={() => setFilterMode("day")}>
-                Day
-              </button>
-              <button className={filterMode === "month" ? "active" : ""} onClick={() => setFilterMode("month")}>
-                Month
-              </button>
-              <button className={filterMode === "year" ? "active" : ""} onClick={() => setFilterMode("year")}>
-                Year
-              </button>
-            </div>
-          </div>
 
-          <div className="field" style={{ minWidth: 140 }}>
-            <label>Year</label>
-            <select className="select" value={filterYear} onChange={(e) => setFilterYear(Number(e.target.value))}>
-              {yearsOptions.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {filterMode === "day" || filterMode === "month" ? (
-            <div className="field" style={{ minWidth: 160 }}>
-              <label>Month</label>
-              <select className="select" value={filterMonth} onChange={(e) => setFilterMonth(Number(e.target.value))}>
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+            <div>
+              <div className="label" style={{ textAlign: "right" }}>
+                Choose month
+              </div>
+              <select
+                className="input"
+                value={month}
+                onChange={(e) => {
+                  setMonth(e.target.value);
+                  setDay("");
+                }}
+              >
+                {months.map((m) => (
                   <option key={m} value={m}>
-                    {pad2(m)}
+                    {m}
                   </option>
                 ))}
               </select>
             </div>
-          ) : null}
 
-          {filterMode === "day" ? (
-            <div className="field" style={{ minWidth: 140 }}>
-              <label>Day</label>
-              <select className="select" value={filterDay} onChange={(e) => setFilterDay(Number(e.target.value))}>
-                {daysInMonth.map((d) => (
-                  <option key={d} value={d}>
-                    {pad2(d)}
-                  </option>
-                ))}
-              </select>
+            <div>
+              <div className="label" style={{ textAlign: "right" }}>
+                Choose day
+              </div>
+              <input className="input" type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </div>
-          ) : null}
+          </div>
+        </div>
 
-          <div className="field" style={{ minWidth: 220 }}>
-            <label>Salesperson</label>
-            <select
-              className="select"
-              value={filterSellerId}
-              onChange={(e) => setFilterSellerId(e.target.value === "all" ? "all" : Number(e.target.value))}
-            >
-              <option value="all">All</option>
-              {sellers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+        <div className="salesTable" style={{ marginTop: 12 }}>
+          <div className="salesTableHead">
+            <div>Date</div>
+            <div>Client</div>
+            <div>Item</div>
+            <div className="right">Units</div>
+            <div className="right">Profit</div>
+            <div>Note</div>
+            <div className="right">Actions</div>
           </div>
 
-          <button className="btn btnPrimary" onClick={fetchSales} disabled={loading}>
-            {loading ? "Loading..." : "Apply"}
-          </button>
-        </div>
-
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Client</th>
-                <th>Seller</th>
-                <th>Items</th>
-                <th>Units</th>
-                <th>Profit</th>
-                <th>Note</th>
-                <th style={{ width: 120 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salesWithComputed.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={{ opacity: 0.8 }}>
-                    {loading ? "Loading..." : "No sales found for this filter."}
-                  </td>
-                </tr>
-              ) : (
-                (salesWithComputed as any[]).map((s) => {
-                  const clientName = s.client_id ? clientById.get(s.client_id)?.name ?? "—" : "—";
-                  const sellerName = s.seller_id ? sellerById.get(s.seller_id)?.name ?? "—" : "—";
-
-                  const itemsText =
-                    s.lines
-                      .map((ln: any) => `${itemById.get(ln.item_id)?.name ?? `Item#${ln.item_id}`} (${safeNum(ln.qty)})`)
-                      .join(", ") || "—";
-
-                  return (
-                    <tr key={s.id}>
-                      <td>{s.sale_date ?? "—"}</td>
-                      <td>{clientName ?? "—"}</td>
-                      <td>{sellerName ?? "—"}</td>
-                      <td style={{ maxWidth: 420 }}>{itemsText}</td>
-                      <td>{s.units ?? 0}</td>
-                      <td>{money(s.profit ?? 0)}</td>
-                      <td style={{ maxWidth: 240 }}>{s.notes ?? "—"}</td>
-                      <td>
-                        <button className="btn btnDanger" onClick={() => deleteSale(s.id)}>
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="muted" style={{ marginTop: 10 }}>
-          Export downloads exactly what you’re filtered to.
+          {filteredRecent.length === 0 ? (
+            <div style={{ padding: 12 }} className="muted">
+              No sales found for that filter.
+            </div>
+          ) : (
+            filteredRecent.map((r) => (
+              <div key={r.id} className="salesTableRow">
+                <div data-k="Date">{(r.sale_date ?? r.created_at ?? "").slice(0, 10) || "—"}</div>
+                <div data-k="Client">{r.client_name ?? "—"}</div>
+                <div data-k="Item" className="bold">
+                  {r.item_name ?? "—"}
+                </div>
+                <div data-k="Units" className="right">
+                  {r.units ?? "—"}
+                </div>
+                <div data-k="Profit" className="right">
+                  {r.profit == null ? "—" : `$${Number(r.profit).toFixed(2)}`}
+                </div>
+                <div data-k="Note">{r.note ?? "—"}</div>
+                <div data-k="Actions" className="right">
+                  <button className="btn" type="button" onClick={() => void deleteSale(r.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

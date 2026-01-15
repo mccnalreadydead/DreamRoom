@@ -10,7 +10,7 @@ import Tracking from "./pages/Tracking";
 import CalendarPage from "./pages/CalendarPage";
 import NewProduct from "./pages/NewProduct";
 import Clients from "./pages/Clients";
-import SalesMetrics from "./pages/SalesMetrics"; // ✅ NEW
+import SalesMetrics from "./pages/SalesMetrics"; // ✅ no .tsx
 
 export default function App() {
   return (
@@ -19,7 +19,7 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="sales" element={<Sales />} />
-        <Route path="sales-metrics" element={<SalesMetrics />} /> {/* ✅ NEW */}
+        <Route path="sales-metrics" element={<SalesMetrics />} />
         <Route path="tracking" element={<Tracking />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="clients" element={<Clients />} />
