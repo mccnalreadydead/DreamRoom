@@ -296,9 +296,25 @@ export default function Sales() {
 
   // ✅ Helper: load items for the selected inventory WITHOUT changing your UI behavior.
   async function loadItemsForChoice(choice: InventoryChoice) {
-    // ✅ NEW: If "none", we do not change how items are sourced; keep current items list.
-    // This keeps the app working exactly the same, while skipping deduction.
-    if (choice === "none") return;
+    // ✅ FIX: "none" should STILL load items, it just shouldn't deduct inventory.
+    // We load the default inventory list (same as the fallback) and keep the source as "inventory".
+    if (choice === "none") {
+      const inv = await supabase.from("inventory").select("id,item,cost").order("item", { ascending: true });
+      if (inv.error) throw inv.error;
+
+      const loadedItems = ((inv.data as any[]) ?? [])
+        .map((r) => ({
+          id: Number(r.id),
+          name: String(r.item ?? "").trim(),
+          cost: r.cost ?? null,
+        }))
+        .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      invSourceRef.current = { mode: "table", table: "inventory" };
+      setItems(loadedItems);
+      return;
+    }
 
     // clear selections so you can’t accidentally deduct from the wrong inventory IDs
     setLines((prev) => prev.map((l) => ({ ...l, itemId: null })));
@@ -527,7 +543,10 @@ export default function Sales() {
       // 2) Try to load sale_lines (SAFE: don’t break if table doesn’t exist)
       let linesRows: any[] = [];
       try {
-        const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
+        const linesRes = await supabase
+          .from("sale_lines")
+          .select("sale_id,item_id,units,price,fees")
+          .in("sale_id", saleIds);
 
         if (linesRes.error) throw linesRes.error;
         linesRows = (linesRes.data as any[]) ?? [];
@@ -588,7 +607,8 @@ export default function Sales() {
         const saleLines = linesBySale.get(sid) ?? [];
 
         const distinctItemIds = Array.from(new Set(saleLines.map((l) => l.item_id).filter(Boolean)));
-        const firstItemName = distinctItemIds.length > 0 ? invMap.get(Number(distinctItemIds[0]))?.name ?? "—" : "—";
+        const firstItemName =
+          distinctItemIds.length > 0 ? invMap.get(Number(distinctItemIds[0]))?.name ?? "—" : "—";
 
         const item_name = distinctItemIds.length <= 1 ? firstItemName : `Multiple items (${distinctItemIds.length})`;
 
@@ -1266,7 +1286,12 @@ export default function Sales() {
           return (
             <div key={i} style={{ marginTop: 10 }}>
               <div className="lineRow">
-                <ItemSearchDropdown value={l.itemId} items={items} placeholder="Select item" onChange={(nextId) => setLine(i, { itemId: nextId })} />
+                <ItemSearchDropdown
+                  value={l.itemId}
+                  items={items}
+                  placeholder="Select item"
+                  onChange={(nextId) => setLine(i, { itemId: nextId })}
+                />
 
                 <input
                   className="input"

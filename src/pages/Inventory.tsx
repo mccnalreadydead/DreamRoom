@@ -420,7 +420,7 @@ export default function Inventory() {
           })}
         </div>
 
-        {/* ✅ Bottom pager (now the “sorting/page” control lives at the bottom) */}
+        {/* ✅ Bottom pager: ONLY Prev / Next (one page backward/forward) */}
         <div className="inv-bottomPager">
           <div className="pagerInfo">
             Showing{" "}
@@ -431,9 +431,6 @@ export default function Inventory() {
           </div>
 
           <div className="pagerBtns">
-            <button className="btn ghost pagerBtn" onClick={() => setPage(1)} disabled={page <= 1}>
-              « First
-            </button>
             <button className="btn ghost pagerBtn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
               ‹ Prev
             </button>
@@ -444,9 +441,6 @@ export default function Inventory() {
 
             <button className="btn ghost pagerBtn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next ›
-            </button>
-            <button className="btn ghost pagerBtn" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
-              Last »
             </button>
           </div>
         </div>
