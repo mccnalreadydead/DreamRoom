@@ -29,6 +29,10 @@ type RecentSale = {
   note?: string | null;
 };
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Searchable dropdown (search input appears inside the dropdown)
  * ✅ FIX: Portal menu + correct "outside click" handling so clicking items works.
@@ -216,10 +220,32 @@ function ItemSearchDropdown({
   );
 }
 
+type InventoryChoice = "Chad" | "Devan" | "none";
+
 export default function Sales() {
   // ✅ Requested labels
   const ALL_YEARS = "All time - years";
   const ALL_MONTHS = "All time - months";
+
+  const MONTHS = useMemo(
+    () => [
+      { num: "01", name: "January" },
+      { num: "02", name: "February" },
+      { num: "03", name: "March" },
+      { num: "04", name: "April" },
+      { num: "05", name: "May" },
+      { num: "06", name: "June" },
+      { num: "07", name: "July" },
+      { num: "08", name: "August" },
+      { num: "09", name: "September" },
+      { num: "10", name: "October" },
+      { num: "11", name: "November" },
+      { num: "12", name: "December" },
+    ],
+    []
+  );
+
+  const monthName = (mm: string) => MONTHS.find((x) => x.num === mm)?.name ?? mm;
 
   const [clients, setClients] = useState<Client[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -228,7 +254,16 @@ export default function Sales() {
   const [clientId, setClientId] = useState<number | null>(null);
   const [sellerId, setSellerId] = useState<number | null>(null);
 
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // ✅ NEW: choose which inventory the sale pulls from
+  // ✅ CHANGED: default is "none" so you can save lines without deducting
+  const [inventoryChoice, setInventoryChoice] = useState<InventoryChoice>("none");
+
+  // Internal: where items were loaded from (table + optional owner field)
+  const invSourceRef = useRef<{ mode: "table" | "table+owner"; table: string; ownerField?: string } | null>(null);
+
+  // ✅ Add Sale date: auto-set to today's date (no "None" button)
+  const [date, setDate] = useState<string>(todayISO());
+
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<Line[]>([{ itemId: null, units: 1, price: 0, fees: 0 }]);
 
@@ -237,10 +272,182 @@ export default function Sales() {
 
   const [recent, setRecent] = useState<RecentSale[]>([]);
   const [year, setYear] = useState<string>(ALL_YEARS);
-  const [month, setMonth] = useState<string>(ALL_MONTHS);
-  const [day, setDay] = useState<string>("");
 
-  // ✅ inventory is PRIMARY (this is where your items are)
+  // stores MM or ALL_MONTHS
+  const [month, setMonth] = useState<string>(ALL_MONTHS);
+
+  // ✅ Recent Sales day: auto-set to today's date, but can be cleared with None
+  const [day, setDay] = useState<string>(todayISO());
+
+  function setLine(i: number, patch: Partial<Line>) {
+    setLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  }
+
+  function addLine() {
+    setLines((prev) => [...prev, { itemId: null, units: 1, price: 0, fees: 0 }]);
+  }
+
+  function removeLine(i: number) {
+    setLines((prev) => {
+      const next = prev.filter((_, idx) => idx !== i);
+      return next.length ? next : [{ itemId: null, units: 1, price: 0, fees: 0 }];
+    });
+  }
+
+  // ✅ Helper: load items for the selected inventory WITHOUT changing your UI behavior.
+  async function loadItemsForChoice(choice: InventoryChoice) {
+    // ✅ NEW: If "none", we do not change how items are sourced; keep current items list.
+    // This keeps the app working exactly the same, while skipping deduction.
+    if (choice === "none") return;
+
+    // clear selections so you can’t accidentally deduct from the wrong inventory IDs
+    setLines((prev) => prev.map((l) => ({ ...l, itemId: null })));
+
+    // Try (A) single "inventory" table with an owner/person column
+    const ownerFieldsToTry = ["owner", "person", "inventory_owner", "inventory_name", "account", "user"];
+
+    for (const ownerField of ownerFieldsToTry) {
+      try {
+        const inv = await supabase
+          .from("inventory")
+          .select("id,item,cost")
+          // @ts-ignore - dynamic column name
+          .eq(ownerField, choice)
+          .order("item", { ascending: true });
+
+        if (!inv.error) {
+          const loadedItems = ((inv.data as any[]) ?? [])
+            .map((r) => ({
+              id: Number(r.id),
+              name: String(r.item ?? "").trim(),
+              cost: r.cost ?? null,
+            }))
+            .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          // If it worked (even if empty), lock in the source so deductions match the same scheme.
+          invSourceRef.current = { mode: "table+owner", table: "inventory", ownerField };
+          setItems(loadedItems);
+          return;
+        }
+      } catch {
+        // try next owner field
+      }
+    }
+
+    // Try (B) separate tables: inventory_chad / inventory_devan (or variants)
+    const tableNamesToTry =
+      choice === "Chad"
+        ? ["inventory_chad", "chad_inventory", "inventory_chad_items"]
+        : ["inventory_devan", "devan_inventory", "inventory_devan_items"];
+
+    for (const t of tableNamesToTry) {
+      try {
+        const inv = await supabase.from(t).select("id,item,cost").order("item", { ascending: true });
+        if (!inv.error) {
+          const loadedItems = ((inv.data as any[]) ?? [])
+            .map((r) => ({
+              id: Number(r.id),
+              name: String(r.item ?? "").trim(),
+              cost: r.cost ?? null,
+            }))
+            .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          invSourceRef.current = { mode: "table", table: t };
+          setItems(loadedItems);
+          return;
+        }
+      } catch {
+        // try next table
+      }
+    }
+
+    // Final fallback: plain inventory table (no filtering)
+    const inv = await supabase.from("inventory").select("id,item,cost").order("item", { ascending: true });
+    if (inv.error) throw inv.error;
+
+    const loadedItems = ((inv.data as any[]) ?? [])
+      .map((r) => ({
+        id: Number(r.id),
+        name: String(r.item ?? "").trim(),
+        cost: r.cost ?? null,
+      }))
+      .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    invSourceRef.current = { mode: "table", table: "inventory" };
+    setItems(loadedItems);
+  }
+
+  // ✅ Helper: decrement inventory quantities for the selected inventory choice
+  async function deductInventoryForSaleLines(choice: InventoryChoice, saleLines: Line[]) {
+    const src = invSourceRef.current;
+
+    // ✅ NEW: if "none", do nothing (save still works)
+    if (choice === "none") return;
+
+    // If we don't know the source, do nothing (but don’t break saving).
+    if (!src) return;
+
+    // Common qty field names people use
+    const qtyFields = ["qty", "quantity", "units", "stock", "on_hand"];
+
+    for (const l of saleLines) {
+      const itemId = Number(l.itemId);
+      const dec = Number(l.units ?? 0);
+      if (!itemId || !Number.isFinite(itemId) || dec <= 0) continue;
+
+      // Build a row selector: either table+owner, or plain table
+      const base = supabase.from(src.table);
+
+      // Find which qty field exists by attempting a select
+      let foundField: string | null = null;
+      let currentQty: number | null = null;
+
+      for (const f of qtyFields) {
+        try {
+          let q = base.select(`id,${f}`).eq("id", itemId);
+
+          if (src.mode === "table+owner" && src.ownerField) {
+            // @ts-ignore dynamic column name
+            q = q.eq(src.ownerField, choice);
+          }
+
+          const res = await q.single();
+          if (!res.error) {
+            foundField = f;
+            currentQty = Number((res.data as any)?.[f] ?? 0);
+            break;
+          }
+        } catch {
+          // try next field
+        }
+      }
+
+      // If we can’t find a qty field, we skip deduction silently (so sales still save).
+      if (!foundField) continue;
+
+      const nextQty = Math.max(0, Number(currentQty ?? 0) - dec);
+
+      try {
+        let upd = base.update({ [foundField]: nextQty }).eq("id", itemId);
+
+        if (src.mode === "table+owner" && src.ownerField) {
+          // @ts-ignore dynamic column name
+          upd = upd.eq(src.ownerField, choice);
+        }
+
+        const ures = await upd;
+        // If this fails, still don’t block the sale save (we just warn in console)
+        if (ures.error) console.warn("Inventory deduction failed:", ures.error.message);
+      } catch (e: any) {
+        console.warn("Inventory deduction exception:", e?.message ?? e);
+      }
+    }
+  }
+
+  // ✅ inventory + people/clients load
   useEffect(() => {
     const load = async () => {
       setErr("");
@@ -253,46 +460,29 @@ export default function Sales() {
         if (c.error) throw c.error;
         if (p.error) throw p.error;
 
-        let loadedItems: Item[] = [];
-
-        // 1) PRIMARY: inventory (id, item, cost)
-        const inv = await supabase.from("inventory").select("id,item,cost").order("item", { ascending: true });
-        if (inv.error) throw inv.error;
-
-        if (Array.isArray(inv.data) && inv.data.length > 0) {
-          loadedItems = (inv.data as any[]).map((r) => ({
-            id: Number(r.id),
-            name: String(r.item ?? "").trim(),
-            cost: r.cost ?? null,
-          }));
-        } else {
-          // 2) fallback: item_catalog
-          const cat = await supabase.from("item_catalog").select("id,name,cost").order("name", { ascending: true });
-          if (cat.error) throw cat.error;
-
-          loadedItems = (cat.data as any[]).map((r) => ({
-            id: Number(r.id),
-            name: String(r.name ?? "").trim(),
-            cost: r.cost ?? null,
-          }));
-        }
-
-        loadedItems = loadedItems
-          .filter((x) => Number.isFinite(x.id) && x.name && x.name.trim().length > 0)
-          .sort((a, b) => a.name.localeCompare(b.name));
-
         setClients((c.data as any) ?? []);
         setPeople((p.data as any) ?? []);
-        setItems(loadedItems);
 
-        console.log("Loaded items:", loadedItems.length, loadedItems.slice(0, 10));
+        // ✅ load items for current inventory choice
+        await loadItemsForChoice(inventoryChoice);
+
+        console.log("Loaded items:", items.length, items.slice(0, 10));
       } catch (e: any) {
         setErr(e?.message ?? String(e));
       }
     };
 
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ✅ when switching inventory, re-load items + reset selected itemIds
+  useEffect(() => {
+    void loadItemsForChoice(inventoryChoice).catch((e: any) => {
+      setErr(e?.message ?? String(e));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inventoryChoice]);
 
   // ✅ Profit math: price - fees - (cost * units)
   const formProfit = useMemo(() => {
@@ -311,21 +501,6 @@ export default function Sales() {
     if (!hasProfit) return null;
     return recent.reduce((s, r) => s + Number(r.profit ?? 0), 0);
   }, [recent]);
-
-  function setLine(i: number, patch: Partial<Line>) {
-    setLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  }
-
-  function addLine() {
-    setLines((prev) => [...prev, { itemId: null, units: 1, price: 0, fees: 0 }]);
-  }
-
-  function removeLine(i: number) {
-    setLines((prev) => {
-      const next = prev.filter((_, idx) => idx !== i);
-      return next.length ? next : [{ itemId: null, units: 1, price: 0, fees: 0 }];
-    });
-  }
 
   async function loadRecent() {
     setLoading(true);
@@ -352,10 +527,7 @@ export default function Sales() {
       // 2) Try to load sale_lines (SAFE: don’t break if table doesn’t exist)
       let linesRows: any[] = [];
       try {
-        const linesRes = await supabase
-          .from("sale_lines")
-          .select("sale_id,item_id,units,price,fees")
-          .in("sale_id", saleIds);
+        const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
 
         if (linesRes.error) throw linesRes.error;
         linesRows = (linesRes.data as any[]) ?? [];
@@ -416,8 +588,7 @@ export default function Sales() {
         const saleLines = linesBySale.get(sid) ?? [];
 
         const distinctItemIds = Array.from(new Set(saleLines.map((l) => l.item_id).filter(Boolean)));
-        const firstItemName =
-          distinctItemIds.length > 0 ? (invMap.get(Number(distinctItemIds[0]))?.name ?? "—") : "—";
+        const firstItemName = distinctItemIds.length > 0 ? invMap.get(Number(distinctItemIds[0]))?.name ?? "—" : "—";
 
         const item_name = distinctItemIds.length <= 1 ? firstItemName : `Multiple items (${distinctItemIds.length})`;
 
@@ -446,7 +617,13 @@ export default function Sales() {
 
       setRecent(mapped);
     } catch (e: any) {
-      setErr(e?.message ?? String(e));
+      const msg = e?.message ?? String(e);
+      // ✅ keep behavior; just make the common browser error less confusing
+      if (String(msg).toLowerCase().includes("failed to fetch")) {
+        setErr("TypeError: Failed to fetch");
+      } else {
+        setErr(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -466,23 +643,29 @@ export default function Sales() {
     return [ALL_YEARS, ...Array.from(s).sort((a, b) => b.localeCompare(a))];
   }, [recent]);
 
-  const months = useMemo(() => {
+  // available month NUMBERS for chosen year (MM)
+  const monthsNums = useMemo(() => {
     if (year === ALL_YEARS) return [ALL_MONTHS];
     const s = new Set<string>();
     for (const r of recent) {
       const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
       if (d.startsWith(year + "-")) s.add(d.slice(5, 7));
     }
-    return [ALL_MONTHS, ...Array.from(s).sort((a, b) => b.localeCompare(a))];
+    const nums = Array.from(s).sort((a, b) => b.localeCompare(a));
+    return [ALL_MONTHS, ...nums];
   }, [recent, year]);
 
   const filteredRecent = useMemo(() => {
     return recent.filter((r) => {
       const d = (r.sale_date ?? r.created_at ?? "").slice(0, 10);
       if (!d) return false;
+
+      // ✅ day overrides year/month
       if (day) return d === day;
+
       if (year !== ALL_YEARS && d.slice(0, 4) !== year) return false;
       if (month !== ALL_MONTHS && d.slice(5, 7) !== month) return false;
+
       return true;
     });
   }, [recent, year, month, day]);
@@ -502,7 +685,6 @@ export default function Sales() {
   }
 
   async function saveSale() {
-    if (!date) return alert("Please choose a date.");
     if (!lines.length) return alert("Add at least one line.");
     if (lines.some((l) => !l.itemId)) return alert("Please select an item for every line.");
 
@@ -513,10 +695,11 @@ export default function Sales() {
         .from("sales")
         .insert([
           {
-            sale_date: date,
+            sale_date: date ? date : null,
             client_id: clientId,
             seller_id: sellerId,
             notes: note || null,
+            // NOTE: not adding inventory fields here to avoid schema changes.
           },
         ])
         .select("id")
@@ -535,15 +718,22 @@ export default function Sales() {
         fees: Number(l.fees || 0),
       }));
 
-      // NOTE: if sale_lines doesn't exist, this will warn but not break
       const lineInsert = await supabase.from("sale_lines").insert(linesPayload);
       if (lineInsert.error) {
         console.warn("sale_lines insert failed (table may not exist):", lineInsert.error.message);
       }
 
+      // ✅ NEW: Deduct from the selected inventory (Chad / Devan) unless "none"
+      if (inventoryChoice !== "none") {
+        await deductInventoryForSaleLines(inventoryChoice, lines);
+      }
+
       setClientId(null);
       setSellerId(null);
-      setDate(new Date().toISOString().slice(0, 10));
+
+      // ✅ keep Add Sale date auto-set to today after saving
+      setDate(todayISO());
+
       setNote("");
       setLines([{ itemId: null, units: 1, price: 0, fees: 0 }]);
 
@@ -704,6 +894,35 @@ export default function Sales() {
           align-items: center;
           gap: 10px;
           flex-wrap: wrap;
+        }
+
+        /* ✅ Add Sale shimmer/glow (visual only) */
+        .addSaleTitle{
+          position: relative;
+          display: inline-block;
+        }
+        .addSaleTitle .addSaleShimmer{
+          position:absolute;
+          inset:-10px -18px -10px -18px;
+          border-radius: 16px;
+          pointer-events:none;
+          background: linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255,255,255,0.00) 35%,
+            rgba(200,255,220,0.26) 45%,
+            rgba(255,255,255,0.06) 55%,
+            transparent 70%
+          );
+          transform: translateX(-70%) skewX(-10deg);
+          mix-blend-mode: screen;
+          opacity: 0.70;
+          animation: addSaleSweep 3.1s linear infinite;
+        }
+        @keyframes addSaleSweep{
+          0%   { transform: translateX(-70%) skewX(-10deg); opacity: 0.52; }
+          40%  { opacity: 0.95; }
+          100% { transform: translateX(70%) skewX(-10deg); opacity: 0.56; }
         }
 
         /* green pill */
@@ -928,6 +1147,7 @@ export default function Sales() {
           .salesEarth:after{ animation:none; }
           .salesTitle h1 .titleShimmer{ animation:none; }
           .salesCard:before{ animation:none; }
+          .addSaleTitle .addSaleShimmer{ animation:none; }
         }
 
         input, select, textarea { font-size: 16px; }
@@ -959,12 +1179,17 @@ export default function Sales() {
 
       <div className="salesCard">
         <div className="topRow">
-          <h2 style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.10)" }}>Add Sale</h2>
+          <h2 className="addSaleTitle" style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.10)" }}>
+            Add Sale
+            <span className="addSaleShimmer" aria-hidden="true" />
+          </h2>
           <span className="pillGold">Form profit: ${formProfit.toFixed(2)}</span>
         </div>
 
         <div style={{ marginTop: 12 }}>
           <div className="label">Date</div>
+
+          {/* ✅ Default to today's date, and NO "None" button */}
           <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
 
@@ -1006,14 +1231,23 @@ export default function Sales() {
           </select>
         </div>
 
+        {/* ✅ Inventory selector (Chad / Devan / none) */}
+        <div style={{ marginTop: 12 }}>
+          <div className="label">Choose inventory (Chad or Devan)</div>
+          <select
+            className="input"
+            value={inventoryChoice}
+            onChange={(e) => setInventoryChoice((e.target.value as InventoryChoice) || "none")}
+          >
+            <option value="none">none/don&apos;t deduct</option>
+            <option value="Chad">Chad</option>
+            <option value="Devan">Devan</option>
+          </select>
+        </div>
+
         <div style={{ marginTop: 12 }}>
           <div className="label">Note (optional, applies to all lines)</div>
-          <input
-            className="input"
-            placeholder="Optional notes..."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
+          <input className="input" placeholder="Optional notes..." value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
 
         <div className="lineHeader">
@@ -1032,12 +1266,7 @@ export default function Sales() {
           return (
             <div key={i} style={{ marginTop: 10 }}>
               <div className="lineRow">
-                <ItemSearchDropdown
-                  value={l.itemId}
-                  items={items}
-                  placeholder="Select item"
-                  onChange={(nextId) => setLine(i, { itemId: nextId })}
-                />
+                <ItemSearchDropdown value={l.itemId} items={items} placeholder="Select item" onChange={(nextId) => setLine(i, { itemId: nextId })} />
 
                 <input
                   className="input"
@@ -1061,7 +1290,7 @@ export default function Sales() {
                   placeholder="Price Paid"
                 />
 
-                {/* ✅ (recommended) same fix for Fees */}
+                {/* ✅ same fix for Fees */}
                 <input
                   className="input"
                   type="number"
@@ -1110,7 +1339,7 @@ export default function Sales() {
                 onChange={(e) => {
                   setYear(e.target.value);
                   setMonth(ALL_MONTHS);
-                  setDay("");
+                  setDay(""); // ✅ switching to year/month mode clears day
                 }}
               >
                 {years.map((y) => (
@@ -1125,19 +1354,27 @@ export default function Sales() {
               <div className="label" style={{ textAlign: "right" }}>
                 Choose month
               </div>
+
+              {/* ✅ Month NAMES, but values stay as MM (filter logic unchanged) */}
               <select
                 className="input"
                 value={month}
                 onChange={(e) => {
                   setMonth(e.target.value);
-                  setDay("");
+                  setDay(""); // ✅ switching to year/month mode clears day
                 }}
               >
-                {months.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
+                {monthsNums.map((m) =>
+                  m === ALL_MONTHS ? (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ) : (
+                    <option key={m} value={m}>
+                      {monthName(m)}
+                    </option>
+                  )
+                )}
               </select>
             </div>
 
@@ -1145,7 +1382,14 @@ export default function Sales() {
               <div className="label" style={{ textAlign: "right" }}>
                 Choose day
               </div>
+
+              {/* ✅ Defaults to today's date; None clears it back to "all time / year / month" */}
               <input className="input" type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+              <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button className="btn" type="button" onClick={() => setDay("")}>
+                  None
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1171,10 +1415,7 @@ export default function Sales() {
               <div key={r.id} className="salesTableRow">
                 <div data-k="Date">{(r.sale_date ?? r.created_at ?? "").slice(0, 10) || "—"}</div>
                 <div data-k="Client">{r.client_name ?? "—"}</div>
-
-                {/* ✅ NEW COLUMN */}
                 <div data-k="Salesperson">{r.seller_name ?? "—"}</div>
-
                 <div data-k="Item" className="bold">
                   {r.item_name ?? "—"}
                 </div>

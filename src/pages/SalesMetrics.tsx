@@ -335,7 +335,7 @@ export default function SalesMetrics() {
 
   return (
     <div className="page smX">
-      {/* ✅ VISUAL ONLY: cooler title, stronger button pulse, seller neon colors for recent rows */}
+      {/* ✅ VISUAL ONLY: Platinum / diamond black+white theme. Function unchanged. */}
       <style>{`
         .smX{
           position: relative;
@@ -345,36 +345,63 @@ export default function SalesMetrics() {
         .smX > *{ position: relative; z-index: 2; }
 
         /* =========================================================
-           BACKGROUND AURA (VISUAL ONLY)
+           DIAMOND STUDDED BACKDROP (VISUAL ONLY)
+           - Black/white/gray
+           - Subtle "flutter" shimmer
            ========================================================= */
         .smX::before{
           content:"";
-          position:absolute;
-          inset:-60px;
-          z-index:0;
+          position: fixed;
+          inset: 0;
+          z-index: 0;
           pointer-events:none;
           background:
-            radial-gradient(1200px 680px at 18% 0%, rgba(212,175,55,0.26), transparent 62%),
-            radial-gradient(980px 640px at 86% 18%, rgba(160,20,40,0.24), transparent 64%),
-            radial-gradient(1100px 760px at 55% 115%, rgba(140,90,255,0.22), transparent 62%),
-            radial-gradient(780px 520px at 48% 40%, rgba(0,210,255,0.09), transparent 60%),
-            linear-gradient(180deg, rgba(10,8,18,0.42), rgba(0,0,0,0.18));
-          filter: blur(14px) saturate(1.22);
-          opacity: 0.98;
+            radial-gradient(1100px 680px at 18% 6%, rgba(255,255,255,0.08), transparent 62%),
+            radial-gradient(980px 640px at 86% 18%, rgba(255,255,255,0.06), transparent 64%),
+            radial-gradient(900px 620px at 45% 98%, rgba(0,0,0,0.86), transparent 55%),
+            linear-gradient(180deg, rgba(0,0,0,0.62), rgba(0,0,0,0.86));
+          opacity: 1;
+        }
+
+        /* Diamond pattern + sparkle caustics */
+        .smX::after{
+          content:"";
+          position: fixed;
+          inset: -60px;
+          z-index: 1;
+          pointer-events:none;
+          opacity: 0.75;
           mix-blend-mode: screen;
-          animation: smAuraPulse 6.4s ease-in-out infinite;
+          filter: saturate(0.85) contrast(1.12);
+          background:
+            /* DIAMOND GRID (two diagonals) */
+            repeating-linear-gradient(45deg,
+              rgba(255,255,255,0.00) 0 18px,
+              rgba(255,255,255,0.06) 19px,
+              rgba(255,255,255,0.00) 38px
+            ),
+            repeating-linear-gradient(-45deg,
+              rgba(255,255,255,0.00) 0 18px,
+              rgba(255,255,255,0.05) 19px,
+              rgba(255,255,255,0.00) 38px
+            ),
+            /* sparkle flecks */
+            radial-gradient(circle at 18% 22%, rgba(255,255,255,0.18), rgba(255,255,255,0.00) 22%),
+            radial-gradient(circle at 72% 34%, rgba(255,255,255,0.14), rgba(255,255,255,0.00) 24%),
+            radial-gradient(circle at 40% 68%, rgba(255,255,255,0.10), rgba(255,255,255,0.00) 28%);
+          animation: diamondFlutter 7.2s ease-in-out infinite;
           transform: translateZ(0);
         }
 
-        @keyframes smAuraPulse{
-          0%   { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.88; }
-          35%  { transform: translate3d(10px,-6px,0px) scale(1.03); opacity: 1; }
-          70%  { transform: translate3d(-8px,4px,0px) scale(1.02); opacity: 0.96; }
-          100% { transform: translate3d(0px,0px,0px) scale(1); opacity: 0.88; }
+        @keyframes diamondFlutter{
+          0%   { transform: translate3d(0px,0px,0px) rotate(0.001deg); opacity: 0.58; filter: blur(0.2px); }
+          35%  { transform: translate3d(10px,-8px,0px) rotate(0.001deg); opacity: 0.82; filter: blur(0.0px); }
+          70%  { transform: translate3d(-8px,6px,0px) rotate(0.001deg); opacity: 0.72; filter: blur(0.15px); }
+          100% { transform: translate3d(0px,0px,0px) rotate(0.001deg); opacity: 0.58; filter: blur(0.2px); }
         }
 
         @media (prefers-reduced-motion: reduce){
-          .smX::before{ animation:none; }
+          .smX::after{ animation:none; }
         }
 
         /* =========================================================
@@ -389,42 +416,75 @@ export default function SalesMetrics() {
         }
 
         /* =========================================================
-           EXCITING "SALES" TITLE (VISUAL ONLY)
+           DIAMOND TITLE (VISUAL ONLY)
            ========================================================= */
+        .salesTitleWrap{
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          position: relative;
+        }
+
         .salesTitle{
           margin: 0;
           font-weight: 1000;
-          letter-spacing: 0.8px;
+          letter-spacing: 1.2px;
           text-transform: uppercase;
           line-height: 1.02;
+          position: relative;
 
-          /* animated gradient fill */
+          /* diamond gradient text */
           background: linear-gradient(90deg,
             rgba(255,255,255,0.98),
-            rgba(212,175,55,0.98),
-            rgba(255,120,60,0.95),
-            rgba(140,90,255,0.98),
-            rgba(0,210,255,0.95),
+            rgba(210,210,210,0.98),
+            rgba(255,255,255,0.95),
+            rgba(160,160,160,0.98),
             rgba(255,255,255,0.98)
           );
-          background-size: 220% 100%;
+          background-size: 240% 100%;
           -webkit-background-clip: text;
           background-clip: text;
           color: transparent;
 
           text-shadow:
-            0 0 22px rgba(212,175,55,0.16),
-            0 0 28px rgba(140,90,255,0.14),
-            0 18px 58px rgba(0,0,0,0.75);
+            0 0 18px rgba(255,255,255,0.10),
+            0 0 28px rgba(255,255,255,0.08),
+            0 20px 70px rgba(0,0,0,0.80);
 
-          animation: titleSheen 3.1s linear infinite;
+          animation: titleDiamondSheen 2.8s linear infinite;
         }
 
-        .salesTitleWrap{
-          display: inline-flex;
-          align-items: center;
-          gap: 10px;
+        /* shimmer sweep across title */
+        .salesTitle::after{
+          content:"";
+          position:absolute;
+          inset: -6px -18px -6px -18px;
+          border-radius: 16px;
+          pointer-events:none;
+          background: linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255,255,255,0.00) 35%,
+            rgba(255,255,255,0.25) 45%,
+            rgba(255,255,255,0.08) 55%,
+            transparent 70%
+          );
+          transform: translateX(-70%) skewX(-10deg);
+          mix-blend-mode: screen;
+          opacity: 0.85;
+          animation: titleSweep 3.0s linear infinite;
         }
+
+        @keyframes titleDiamondSheen{
+          0%   { background-position: 0% 50%; }
+          100% { background-position: 240% 50%; }
+        }
+        @keyframes titleSweep{
+          0%   { transform: translateX(-70%) skewX(-10deg); opacity: 0.55; }
+          45%  { opacity: 0.95; }
+          100% { transform: translateX(70%) skewX(-10deg); opacity: 0.60; }
+        }
+
         .salesBadge{
           height: 26px;
           padding: 0 10px;
@@ -433,22 +493,17 @@ export default function SalesMetrics() {
           align-items: center;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.6px;
-          color: rgba(255,255,255,0.92);
-          border: 1px solid rgba(255,255,255,0.14);
+          letter-spacing: 0.7px;
+          color: rgba(255,255,255,0.88);
+          border: 1px solid rgba(255,255,255,0.16);
           background:
-            radial-gradient(140px 40px at 30% 10%, rgba(255,255,255,0.12), transparent 60%),
-            linear-gradient(180deg, rgba(212,175,55,0.18), rgba(10,10,16,0.45));
+            radial-gradient(160px 44px at 30% 10%, rgba(255,255,255,0.12), transparent 60%),
+            linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.55));
           box-shadow:
-            0 0 0 2px rgba(212,175,55,0.10),
-            0 12px 32px rgba(0,0,0,0.40),
-            0 0 22px rgba(212,175,55,0.10);
+            0 0 0 2px rgba(255,255,255,0.06),
+            0 12px 32px rgba(0,0,0,0.45),
+            0 0 22px rgba(255,255,255,0.08);
           user-select: none;
-        }
-
-        @keyframes titleSheen{
-          0%   { background-position: 0% 50%; }
-          100% { background-position: 220% 50%; }
         }
 
         @media (max-width: 420px){
@@ -467,57 +522,60 @@ export default function SalesMetrics() {
           margin-top: 12px; display:grid; grid-template-columns: repeat(12, 1fr); gap: 10px;
         }
 
-        /* KPI cards: glow up (visual only) */
+        /* KPI cards: platinum glass (visual only) */
         .smX .cardKpi{
           grid-column: span 6;
           padding: 12px;
           position: relative;
           overflow: hidden;
-          border-color: rgba(255,255,255,0.10);
-          background: rgba(0,0,0,0.26);
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(0,0,0,0.30);
+          backdrop-filter: blur(12px);
           box-shadow:
-            0 14px 44px rgba(0,0,0,0.42),
-            0 0 0 1px rgba(255,255,255,0.03) inset;
-          transition: transform 0.14s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+            0 18px 60px rgba(0,0,0,0.55),
+            0 0 0 1px rgba(255,255,255,0.04) inset;
+          transition: transform 0.14s ease, box-shadow 0.22s ease, border-color 0.22s ease, filter 0.22s ease;
         }
+
         .smX .cardKpi::before{
           content:"";
           position:absolute;
           inset:-2px;
           pointer-events:none;
           background:
-            radial-gradient(700px 260px at 15% 0%, rgba(212,175,55,0.18), transparent 60%),
-            radial-gradient(620px 240px at 85% 40%, rgba(160,20,40,0.14), transparent 62%),
-            radial-gradient(520px 220px at 50% 120%, rgba(140,90,255,0.12), transparent 62%),
-            linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
-          opacity: 0.70;
-          filter: blur(0.5px);
+            radial-gradient(720px 260px at 15% 0%, rgba(255,255,255,0.10), transparent 60%),
+            radial-gradient(640px 240px at 85% 40%, rgba(255,255,255,0.08), transparent 62%),
+            linear-gradient(180deg, rgba(255,255,255,0.06), transparent);
+          opacity: 0.80;
+          mix-blend-mode: screen;
         }
+
         .smX .cardKpi:hover{
           transform: translateY(-2px);
-          border-color: rgba(212,175,55,0.30);
+          border-color: rgba(255,255,255,0.26);
           box-shadow:
-            0 20px 70px rgba(0,0,0,0.52),
-            0 0 28px rgba(212,175,55,0.12),
-            0 0 22px rgba(140,90,255,0.10);
+            0 22px 80px rgba(0,0,0,0.62),
+            0 0 30px rgba(255,255,255,0.10);
+          filter: brightness(1.06);
         }
+
         .smX .kpiLabel{
           font-size: 12px; font-weight: 950; color: rgba(255,255,255,0.72);
           position: relative; z-index: 1;
-          text-shadow: 0 0 12px rgba(0,0,0,0.35);
+          text-shadow: 0 0 12px rgba(0,0,0,0.40);
         }
+
         .smX .kpiVal{
           margin-top: 5px; font-size: 22px; font-weight: 950;
           position: relative; z-index: 1;
           text-shadow:
-            0 0 18px rgba(212,175,55,0.10),
-            0 0 24px rgba(140,90,255,0.10),
-            0 12px 34px rgba(0,0,0,0.55);
+            0 0 18px rgba(255,255,255,0.10),
+            0 12px 34px rgba(0,0,0,0.65);
         }
 
         /* =========================================================
-           BUTTON POP: "NEW CLIENT" vibe (here: + Add Salesperson)
-           Visual-only: glow + BIG pulse
+           BUTTON POP: premium platinum pulse (visual-only)
            ========================================================= */
         .btnPop{
           position: relative;
@@ -525,10 +583,10 @@ export default function SalesMetrics() {
           transform: translateZ(0);
           border-color: rgba(255,255,255,0.22) !important;
           box-shadow:
-            0 0 0 2px rgba(212,175,55,0.12),
-            0 16px 40px rgba(0,0,0,0.38),
-            0 0 26px rgba(212,175,55,0.18);
-          animation: btnPopPulse 1.15s ease-in-out infinite;
+            0 0 0 2px rgba(255,255,255,0.08),
+            0 16px 40px rgba(0,0,0,0.44),
+            0 0 28px rgba(255,255,255,0.10);
+          animation: btnPopPulse 1.2s ease-in-out infinite;
         }
         .btnPop::before{
           content:"";
@@ -537,13 +595,13 @@ export default function SalesMetrics() {
           border-radius: inherit;
           pointer-events:none;
           background:
-            radial-gradient(220px 80px at 30% 10%, rgba(255,255,255,0.20), transparent 65%),
-            radial-gradient(260px 110px at 70% 40%, rgba(212,175,55,0.40), transparent 70%),
-            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.22), rgba(255,255,255,0.00));
+            radial-gradient(240px 90px at 30% 10%, rgba(255,255,255,0.22), transparent 65%),
+            radial-gradient(260px 110px at 70% 40%, rgba(255,255,255,0.16), transparent 70%),
+            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.26), rgba(255,255,255,0.00));
           mix-blend-mode: screen;
-          opacity: 0.70;
-          filter: blur(0.2px);
-          animation: btnPopSheen 1.65s linear infinite;
+          opacity: 0.72;
+          filter: blur(0.1px);
+          animation: btnPopSheen 1.8s linear infinite;
         }
         .btnPop::after{
           content:"";
@@ -551,15 +609,15 @@ export default function SalesMetrics() {
           inset:-10px;
           border-radius: inherit;
           pointer-events:none;
-          background: radial-gradient(closest-side, rgba(212,175,55,0.30), transparent 70%);
+          background: radial-gradient(closest-side, rgba(255,255,255,0.22), transparent 70%);
           opacity: 0.0;
-          animation: btnPopRing 1.15s ease-out infinite;
+          animation: btnPopRing 1.2s ease-out infinite;
         }
 
         @keyframes btnPopPulse{
-          0%   { transform: translateY(0px) scale(1); filter: brightness(1.05) saturate(1.15); }
-          50%  { transform: translateY(-1px) scale(1.02); filter: brightness(1.22) saturate(1.35); }
-          100% { transform: translateY(0px) scale(1); filter: brightness(1.05) saturate(1.15); }
+          0%   { transform: translateY(0px) scale(1); filter: brightness(1.02) saturate(0.95); }
+          50%  { transform: translateY(-1px) scale(1.02); filter: brightness(1.18) saturate(1.02); }
+          100% { transform: translateY(0px) scale(1); filter: brightness(1.02) saturate(0.95); }
         }
         @keyframes btnPopSheen{
           0%   { background-position: -120% 0%; opacity: 0.55; }
@@ -567,7 +625,7 @@ export default function SalesMetrics() {
           100% { background-position: 220% 0%; opacity: 0.55; }
         }
         @keyframes btnPopRing{
-          0%   { opacity: 0.35; transform: scale(0.92); }
+          0%   { opacity: 0.30; transform: scale(0.92); }
           60%  { opacity: 0.10; transform: scale(1.18); }
           100% { opacity: 0.0; transform: scale(1.28); }
         }
@@ -575,12 +633,14 @@ export default function SalesMetrics() {
         @media (prefers-reduced-motion: reduce){
           .btnPop{ animation:none; }
           .btnPop::before, .btnPop::after{ animation:none; }
+          .salesTitle{ animation:none; }
+          .salesTitle::after{ animation:none; }
         }
 
         /* =========================================================
-           RECENT SALES LIST (function unchanged) + SELLER NEON THEMES
+           RECENT SALES LIST (function unchanged) - subtle platinum hover
            ========================================================= */
-        .smX .list{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.24); }
+        .smX .list{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.26); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; backdrop-filter: blur(12px); }
         .smX .saleRow{
           display:flex; justify-content: space-between; gap: 10px; padding: 10px 0;
           border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -596,7 +656,7 @@ export default function SalesMetrics() {
         }
         .smX .right{ text-align:right; flex: 0 0 auto; }
 
-        /* neon frame per seller (visual only) */
+        /* platinum frame per seller (visual only) */
         .saleGlow{
           position: relative;
           padding: 10px 0;
@@ -614,57 +674,37 @@ export default function SalesMetrics() {
           opacity: 0.0;
           transform: scale(0.995);
           transition: opacity .18s ease, transform .18s ease;
+          background:
+            radial-gradient(420px 90px at 22% 40%, rgba(255,255,255,0.10), transparent 70%),
+            radial-gradient(520px 110px at 82% 40%, rgba(255,255,255,0.08), transparent 72%),
+            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.14), rgba(255,255,255,0.00));
+          box-shadow:
+            0 0 0 1px rgba(255,255,255,0.10) inset,
+            0 0 24px rgba(255,255,255,0.06);
         }
         .saleGlow:hover::before{
-          opacity: 0.75;
+          opacity: 0.78;
           transform: scale(1);
         }
 
-        /* Chadillac = neon orange */
-        .saleGlow.chad::before{
-          background:
-            radial-gradient(380px 70px at 18% 40%, rgba(255,190,120,0.22), transparent 65%),
-            radial-gradient(420px 90px at 82% 40%, rgba(255,120,40,0.20), transparent 70%),
-            linear-gradient(90deg, rgba(255,120,40,0.00), rgba(255,120,40,0.18), rgba(255,120,40,0.00));
-          box-shadow:
-            0 0 0 1px rgba(255,120,40,0.18) inset,
-            0 0 26px rgba(255,120,40,0.14);
-        }
-
-        /* Devan the Dude = neon blue */
-        .saleGlow.devan::before{
-          background:
-            radial-gradient(380px 70px at 18% 40%, rgba(160,220,255,0.20), transparent 65%),
-            radial-gradient(420px 90px at 82% 40%, rgba(0,170,255,0.18), transparent 70%),
-            linear-gradient(90deg, rgba(0,170,255,0.00), rgba(0,170,255,0.16), rgba(0,170,255,0.00));
-          box-shadow:
-            0 0 0 1px rgba(0,170,255,0.16) inset,
-            0 0 26px rgba(0,170,255,0.12);
-        }
-
-        /* default (others) */
-        .saleGlow.other::before{
-          background:
-            radial-gradient(420px 90px at 30% 40%, rgba(140,90,255,0.14), transparent 70%),
-            linear-gradient(90deg, rgba(140,90,255,0.00), rgba(140,90,255,0.12), rgba(140,90,255,0.00));
-          box-shadow:
-            0 0 0 1px rgba(140,90,255,0.10) inset,
-            0 0 22px rgba(140,90,255,0.10);
-        }
+        /* Slightly different tints (still black/white) */
+        .saleGlow.chad::before{ filter: hue-rotate(8deg) brightness(1.02); }
+        .saleGlow.devan::before{ filter: hue-rotate(-8deg) brightness(1.02); }
+        .saleGlow.other::before{ filter: brightness(0.98); }
 
         /* Modal */
         .smX .overlay{
-          position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+          position: fixed; inset: 0; background: rgba(0,0,0,0.78);
           display:flex; align-items:flex-end; justify-content:center; padding: 10px; z-index: 500;
         }
         .smX .sheet{
           width: min(980px, 100%);
           border-radius: 22px;
-          border: 1px solid rgba(212,175,55,0.20);
-          background: rgba(8,10,18,0.92);
+          border: 1px solid rgba(255,255,255,0.18);
+          background: rgba(8,10,14,0.92);
           padding: 14px;
-          box-shadow: 0 24px 80px rgba(0,0,0,0.62), 0 0 30px rgba(212,175,55,0.10);
-          backdrop-filter: blur(12px);
+          box-shadow: 0 24px 80px rgba(0,0,0,0.70), 0 0 30px rgba(255,255,255,0.08);
+          backdrop-filter: blur(14px);
         }
 
         input, select, textarea { font-size: 16px; }
@@ -677,20 +717,20 @@ export default function SalesMetrics() {
 
       <div className="topRow">
         <div>
-          {/* ✅ visual-only: cooler title */}
+          {/* ✅ visual-only: diamond title (text updated to "Sales Metrics") */}
           <div className="salesTitleWrap">
-            <h1 className="salesTitle">Sales</h1>
-            <span className="salesBadge">METRICS</span>
+            <h1 className="salesTitle">Sales Metrics</h1>
+            <span className="salesBadge">PLATINUM</span>
           </div>
 
           <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-            Month + Year + Seller totals. Includes avg items/sale + avg selling price/sale.
+            Premium performance overview
           </div>
 
           {/* Just a small visual label line (no behavior change) */}
           <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,0.74)" }}>
             {selectedSellerDisplay}
-            {selectedSellerNickname ? <span style={{ color: "rgba(212,175,55,0.95)" }}> • {selectedSellerNickname}</span> : null}
+            {selectedSellerNickname ? <span style={{ color: "rgba(255,255,255,0.92)" }}> • {selectedSellerNickname}</span> : null}
             <span className="muted" style={{ fontWeight: 800 }}>
               {" "}
               • {timeLabel}
@@ -699,7 +739,7 @@ export default function SalesMetrics() {
         </div>
 
         <div className="controls">
-          {/* ✅ visual-only: make this glow/pulse harder */}
+          {/* ✅ visual-only: platinum glow/pulse */}
           <button className="btn btnPop" type="button" onClick={() => setAddOpen(true)}>
             + Add Salesperson
           </button>
@@ -716,7 +756,7 @@ export default function SalesMetrics() {
         </div>
       ) : null}
 
-      <div className="card" style={{ padding: 12, marginTop: 10, background: "rgba(0,0,0,0.22)" }}>
+      <div className="card" style={{ padding: 12, marginTop: 10, background: "rgba(0,0,0,0.26)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18, backdropFilter: "blur(12px)" }}>
         <div style={{ fontWeight: 950, marginBottom: 8 }}>Filters</div>
 
         <div className="filterRow">

@@ -49,7 +49,7 @@ export default function Inventory() {
   const [savingId, setSavingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ NEW: search + pagination (visual + list-only)
+  // ✅ search + pagination (visual + list-only)
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 30;
@@ -89,8 +89,6 @@ export default function Inventory() {
     setError(null);
 
     try {
-      // Avoid ordering by a possibly-nonexistent column.
-      // We'll sort client-side using the label column.
       const { data, error } = await supabase.from(tn).select("*");
       if (error) throw error;
 
@@ -102,10 +100,9 @@ export default function Inventory() {
         return an.localeCompare(bn);
       });
 
-      // Only apply if still on the same active inventory
       setRows(list);
     } catch (e: any) {
-      setRows([]); // prevents "crossed" display
+      setRows([]);
       setError(e?.message ?? "Failed to load inventory.");
     } finally {
       setLoading(false);
@@ -113,7 +110,6 @@ export default function Inventory() {
   }
 
   useEffect(() => {
-    // Clear rows immediately on tab switch so nothing “bleeds over”
     setRows([]);
     setError(null);
     setQuery("");
@@ -150,7 +146,6 @@ export default function Inventory() {
     setError(null);
 
     try {
-      // Deletes ONLY from the ACTIVE table
       const { error } = await supabase.from(tableName).delete().eq("id", id);
       if (error) throw error;
 
@@ -170,7 +165,6 @@ export default function Inventory() {
     setError(null);
 
     try {
-      // Inserts ONLY into the ACTIVE table with the ACTIVE column names
       const payload: any = {
         [cols.label]: label,
         [cols.qty]: clampInt(toNumber(newQty, 1)),
@@ -194,15 +188,12 @@ export default function Inventory() {
       setNewQty(1);
       setNewCost(0);
       setNewResell(0);
-
-      // ✅ keep paging sane if a new item comes in
       setPage(1);
     } catch (e: any) {
       setError(e?.message ?? "Failed to add item.");
     }
   }
 
-  // ✅ NEW: filtered + paginated view (does not change stored data)
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
@@ -219,12 +210,10 @@ export default function Inventory() {
   }, [filteredRows.length]);
 
   useEffect(() => {
-    // when filtering changes, snap to page 1
     setPage(1);
   }, [query, active]);
 
   useEffect(() => {
-    // keep page in range if items removed
     if (page > totalPages) setPage(totalPages);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
@@ -266,7 +255,7 @@ export default function Inventory() {
         </button>
       </div>
 
-      {/* ✅ NEW: search + paging controls (visual only + list filtering) */}
+      {/* ✅ Search stays on top. Pager moved to bottom (per request). */}
       <div className="inv-toolbar">
         <div className="searchWrap">
           <span className="searchIcon" aria-hidden="true">
@@ -283,41 +272,6 @@ export default function Inventory() {
               ✕
             </button>
           ) : null}
-        </div>
-
-        <div className="pager">
-          <div className="pagerInfo">
-            Showing{" "}
-            <b>
-              {filteredRows.length ? (page - 1) * PAGE_SIZE + 1 : 0}-
-              {Math.min(page * PAGE_SIZE, filteredRows.length)}
-            </b>{" "}
-            of <b>{filteredRows.length}</b>
-          </div>
-
-          <div className="pagerBtns">
-            <button className="btn ghost pagerBtn" onClick={() => setPage(1)} disabled={page <= 1}>
-              « First
-            </button>
-            <button className="btn ghost pagerBtn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-              ‹ Prev
-            </button>
-
-            <div className="pagerPill">
-              Page <b>{page}</b> / <b>{totalPages}</b>
-            </div>
-
-            <button
-              className="btn ghost pagerBtn"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next ›
-            </button>
-            <button className="btn ghost pagerBtn" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
-              Last »
-            </button>
-          </div>
         </div>
       </div>
 
@@ -399,11 +353,12 @@ export default function Inventory() {
                   <span className={`badge ${low ? "low" : "ok"}`}>{status}</span>
                 </div>
 
-                <div className="cell actions">
-                  <button className="btn danger btnGlowDanger" onClick={() => deleteRow(r.id)}>
+                {/* ✅ SINGLE actions element (prevents duplicate delete buttons on mobile) */}
+                <div className="actionOne">
+                  <button className="btn danger btnGlowDanger delBtn" onClick={() => deleteRow(r.id)}>
                     Delete
                   </button>
-                  {savingId === r.id && <span className="saving">Saving…</span>}
+                  {savingId === r.id && <span className="saving savingOne">Saving…</span>}
                 </div>
 
                 {/* Mobile slim row */}
@@ -458,13 +413,6 @@ export default function Inventory() {
                         onBlur={() => saveRow(r.id, { [cols.resell]: resell } as any)}
                       />
                     </div>
-
-                    <div className="mField mActions">
-                      <button className="btn danger miniBtn btnGlowDanger" onClick={() => deleteRow(r.id)}>
-                        Delete
-                      </button>
-                      {savingId === r.id && <span className="saving">Saving…</span>}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -472,22 +420,33 @@ export default function Inventory() {
           })}
         </div>
 
-        {/* ✅ bottom pager (mobile-friendly) */}
-        <div className="inv-footerPager">
-          <div className="pagerPill">
-            Page <b>{page}</b> / <b>{totalPages}</b> • <span className="mutedTiny">30 per page</span>
+        {/* ✅ Bottom pager (now the “sorting/page” control lives at the bottom) */}
+        <div className="inv-bottomPager">
+          <div className="pagerInfo">
+            Showing{" "}
+            <b>
+              {filteredRows.length ? (page - 1) * PAGE_SIZE + 1 : 0}-{Math.min(page * PAGE_SIZE, filteredRows.length)}
+            </b>{" "}
+            of <b>{filteredRows.length}</b>
           </div>
 
           <div className="pagerBtns">
+            <button className="btn ghost pagerBtn" onClick={() => setPage(1)} disabled={page <= 1}>
+              « First
+            </button>
             <button className="btn ghost pagerBtn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
               ‹ Prev
             </button>
-            <button
-              className="btn ghost pagerBtn"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
+
+            <div className="pagerPill">
+              Page <b>{page}</b> / <b>{totalPages}</b> • <span className="mutedTiny">30 per page</span>
+            </div>
+
+            <button className="btn ghost pagerBtn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next ›
+            </button>
+            <button className="btn ghost pagerBtn" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
+              Last »
             </button>
           </div>
         </div>
@@ -507,46 +466,22 @@ export default function Inventory() {
             <div className="modalGrid">
               <div className="field">
                 <label>Item name</label>
-                <input
-                  className="inp"
-                  value={newLabel}
-                  onChange={(e) => setNewLabel(e.target.value)}
-                  placeholder="e.g. Shure SM7B"
-                  autoFocus
-                />
+                <input className="inp" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="e.g. Shure SM7B" autoFocus />
               </div>
 
               <div className="field">
                 <label>Qty</label>
-                <input
-                  className="inp"
-                  type="number"
-                  inputMode="numeric"
-                  value={newQty}
-                  onChange={(e) => setNewQty(clampInt(toNumber(e.target.value, 1)))}
-                />
+                <input className="inp" type="number" inputMode="numeric" value={newQty} onChange={(e) => setNewQty(clampInt(toNumber(e.target.value, 1)))} />
               </div>
 
               <div className="field">
                 <label>Cost</label>
-                <input
-                  className="inp"
-                  type="number"
-                  inputMode="decimal"
-                  value={newCost}
-                  onChange={(e) => setNewCost(clampMoney(toNumber(e.target.value, 0)))}
-                />
+                <input className="inp" type="number" inputMode="decimal" value={newCost} onChange={(e) => setNewCost(clampMoney(toNumber(e.target.value, 0)))} />
               </div>
 
               <div className="field">
                 <label>Resell</label>
-                <input
-                  className="inp"
-                  type="number"
-                  inputMode="decimal"
-                  value={newResell}
-                  onChange={(e) => setNewResell(clampMoney(toNumber(e.target.value, 0)))}
-                />
+                <input className="inp" type="number" inputMode="decimal" value={newResell} onChange={(e) => setNewResell(clampMoney(toNumber(e.target.value, 0)))} />
               </div>
             </div>
 
@@ -571,7 +506,6 @@ const css = `
 
 /* =========================
    UNDERWATER SHIMMER THEME (VISUAL ONLY)
-   Uses layered gradients + animated caustics
    ========================= */
 .inv-underwater::before{
   content:"";
@@ -602,20 +536,16 @@ const css = `
   mix-blend-mode: screen;
   transform: translateZ(0);
 
-  /* caustics + particles */
   background:
-    /* caustic layer 1 */
     repeating-radial-gradient(circle at 20% 10%,
       rgba(255,255,255,0.00) 0 10px,
       rgba(255,255,255,0.10) 12px,
       rgba(255,255,255,0.00) 22px),
-    /* caustic layer 2 */
     repeating-radial-gradient(circle at 70% 35%,
       rgba(0,255,255,0.00) 0 12px,
       rgba(0,255,255,0.08) 14px,
       rgba(0,255,255,0.00) 26px),
 
-    /* drifting bubbles */
     radial-gradient(circle at 10% 120%, rgba(255,255,255,0.22) 0 2px, rgba(255,255,255,0.10) 7px, transparent 16px),
     radial-gradient(circle at 26% 135%, rgba(255,255,255,0.18) 0 2px, rgba(255,255,255,0.08) 8px, transparent 18px),
     radial-gradient(circle at 44% 128%, rgba(255,255,255,0.16) 0 2px, rgba(255,255,255,0.07) 8px, transparent 18px),
@@ -623,7 +553,6 @@ const css = `
     radial-gradient(circle at 78% 132%, rgba(255,255,255,0.16) 0 2px, rgba(255,255,255,0.07) 8px, transparent 18px),
     radial-gradient(circle at 90% 145%, rgba(255,255,255,0.18) 0 2px, rgba(255,255,255,0.08) 8px, transparent 18px),
 
-    /* faint fog */
     linear-gradient(180deg, rgba(255,255,255,0.05), transparent 55%, rgba(0,210,255,0.04));
 
   background-size:
@@ -830,7 +759,7 @@ const css = `
   margin: 10px 0 12px;
 }
 .searchWrap{
-  flex: 1 1 320px;
+  flex: 1 1 520px;
   min-width: 240px;
   position: relative;
   display:flex;
@@ -868,51 +797,21 @@ const css = `
     0 0 18px rgba(0,210,255,0.10);
 }
 
-.pager{
-  flex: 1 1 360px;
-  min-width: 260px;
-  border-radius: 14px;
-  border: 1px solid rgba(140,90,255,0.14);
-  background: rgba(0,0,0,0.18);
-  box-shadow: 0 14px 42px rgba(0,0,0,0.30);
-  padding: 10px 12px;
-  display:flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.pagerInfo{
-  font-size: 12px;
-  color: rgba(255,255,255,0.72);
-  font-weight: 800;
-}
-.pagerBtns{
-  display:flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items:center;
-  justify-content: space-between;
-}
-.pagerBtn{
-  padding: 10px 12px;
-}
-.pagerPill{
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.04);
-  font-weight: 900;
-  color: rgba(255,255,255,0.85);
-  white-space: nowrap;
-}
-.mutedTiny{ color: rgba(255,255,255,0.60); font-weight: 800; }
-
 /* Card + table */
 .inv-card{ border-radius: 18px; border: 1px solid rgba(0,210,255,.16); background: rgba(10,10,12,.55); overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
 .inv-tableHead{ display:grid; grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr; gap: 10px; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.7); font-weight: 700; font-size: 13px; }
 .inv-tableHead .right{ text-align: right; }
 
 .inv-list{ display:flex; flex-direction: column; }
-.row{ display:grid; grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr; gap: 10px; padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,.06); align-items:center; position: relative; }
+.row{
+  display:grid;
+  grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  align-items:center;
+  position: relative;
+}
 .row:last-child{ border-bottom: none; }
 
 .cell.item .name{ padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.03); font-weight: 700; color: rgba(255,255,255,.92); }
@@ -931,20 +830,52 @@ const css = `
 .badge.ok{ border: 1px solid rgba(0,210,255,.22); background: rgba(0,210,255,.06); color: rgba(200,245,255,.92); }
 .badge.low{ border: 1px solid rgba(255, 90, 90, .35); background: rgba(255, 60, 60, .10); color: rgba(255, 170, 170, .95); }
 
-.cell.actions{ display:flex; align-items:center; justify-content:flex-end; gap: 10px; }
 .saving{ font-size: 12px; color: rgba(255,255,255,.55); }
 .empty{ padding: 18px 16px; color: rgba(255,255,255,.6); font-weight: 650; }
 
-/* Footer pager */
-.inv-footerPager{
+/* ✅ Single actions slot (desktop) */
+.actionOne{
+  grid-column: 6;
   display:flex;
-  justify-content: space-between;
   align-items:center;
+  justify-content:flex-end;
   gap: 10px;
+}
+.delBtn{ width: auto; }
+.savingOne{ white-space: nowrap; }
+
+/* Bottom pager */
+.inv-bottomPager{
   padding: 12px 14px;
   border-top: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.02);
+  display:flex;
+  flex-direction: column;
+  gap: 10px;
 }
+.pagerInfo{
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+  font-weight: 800;
+}
+.pagerBtns{
+  display:flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items:center;
+  justify-content: space-between;
+}
+.pagerBtn{ padding: 10px 12px; }
+.pagerPill{
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  font-weight: 900;
+  color: rgba(255,255,255,0.85);
+  white-space: nowrap;
+}
+.mutedTiny{ color: rgba(255,255,255,0.60); font-weight: 800; }
 
 /* Mobile Slim Layout */
 .mobileRow{ display:none; }
@@ -958,42 +889,68 @@ const css = `
   }
   .btn{ width: 100%; justify-content:center; }
   .inv-tableHead{ display:none; }
+
   .row{ grid-template-columns: 1fr; padding: 10px 12px; }
   .cell{ display:none; }
   .mobileRow{ display:block; }
 
-  .mTop{ display:flex; align-items:center; justify-content:space-between; gap: 10px; margin-bottom: 10px; }
-  .mName{ font-weight: 850; letter-spacing: .1px; color: rgba(255,255,255,.92); overflow:hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+  /* ✅ keep the ONE delete button small on mobile */
+  .actionOne{
+    position:absolute;
+    top: 10px;
+    right: 12px;
+    grid-column: auto;
+    justify-content:flex-end;
+    z-index: 5;
+  }
+  .actionOne .btn{
+    width: auto !important;
+    padding: 8px 10px;
+    border-radius: 12px;
+  }
+  .savingOne{ display:none; } /* keeps it slim; still works on desktop */
+
+  /* Slimmer “card” feel */
+  .mTop{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding-right: 74px; /* space so name doesn't collide with delete */
+  }
+  .mName{
+    font-weight: 850;
+    letter-spacing: .1px;
+    color: rgba(255,255,255,.92);
+    overflow:hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
 
   .mGrid{
     display:grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
     align-items:end;
   }
 
-  .mField{ display:flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .mLabel{ font-size: 11px; color: rgba(255,255,255,.55); font-weight: 800; letter-spacing: .2px; }
+  .mField{ display:flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .mLabel{ font-size: 10px; color: rgba(255,255,255,.55); font-weight: 900; letter-spacing: .2px; }
 
-  .inp.mini{ padding: 10px 12px; border-radius: 12px; font-weight: 750; width: 100%; }
-
-  .mActions{
-    grid-column: 1 / -1;
-    display:flex;
-    justify-content:flex-end;
-    align-items:center;
-    gap: 10px;
-    margin-top: 2px;
+  .inp.mini{
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-weight: 750;
+    width: 100%;
   }
-  .miniBtn{ padding: 10px 12px; border-radius: 12px; width: auto; }
 
   .inv-tabs{ gap: 8px; }
   .tab{ flex: 1 1 auto; text-align:center; }
 
   .inv-toolbar{ gap: 10px; }
-  .pagerBtns{ justify-content: flex-start; }
-  .inv-footerPager{ flex-direction: column; align-items: stretch; }
-  .inv-footerPager .pagerBtns{ justify-content: space-between; width: 100%; }
+  .pagerBtns{ justify-content: space-between; width: 100%; }
 }
 
 /* Modal */
