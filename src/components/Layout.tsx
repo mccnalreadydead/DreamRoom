@@ -109,7 +109,7 @@ export default function Layout() {
         <div className="brandRow">
           <div>
             <div className="brandTitle">☁️ Dream Room ☁️</div>
-            <div className="brandSub">Soft, dreamy inventory & sales tracking ✨</div>
+            <div className="brandSub">Dreamers only ✨</div>
           </div>
         </div>
 
