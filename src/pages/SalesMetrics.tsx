@@ -29,6 +29,7 @@ type SaleLineRow = {
 type InvRow = {
   id: number;
   cost: number | null;
+  category?: string | null; // ✅ NEW
 };
 
 function toNum(v: any, fallback = 0) {
@@ -94,6 +95,10 @@ function sellerTone(name: string | null | undefined) {
   return "other";
 }
 
+const CATEGORIES_TABLE = "inventory_categories";
+const INVENTORY_TABLE = "inventory";
+const INVENTORY_CATEGORY_COL = "category";
+
 export default function SalesMetrics() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -103,6 +108,12 @@ export default function SalesMetrics() {
   const [year, setYear] = useState(String(now.getFullYear()));
   const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
   const [seller, setSeller] = useState<string>("ALL"); // stores REAL name
+
+  // ✅ NEW: category multi-select filter
+  const [catLoading, setCatLoading] = useState(false);
+  const [catErr, setCatErr] = useState("");
+  const [categories, setCategories] = useState<string[]>([]);
+  const [selectedCats, setSelectedCats] = useState<string[]>([]); // empty => All
 
   // data
   const [sellerTable, setSellerTable] = useState<string>("sales_people");
@@ -124,11 +135,36 @@ export default function SalesMetrics() {
     return "sales_people";
   }
 
+  async function loadCategories() {
+    setCatLoading(true);
+    setCatErr("");
+
+    try {
+      const res = await supabase.from(CATEGORIES_TABLE).select("name").order("name", { ascending: true });
+      if (res.error) throw res.error;
+
+      const list = ((res.data as any[]) ?? [])
+        .map((r) => String(r?.name ?? "").trim())
+        .filter(Boolean);
+
+      setCategories(list);
+      // do NOT auto-select anything; empty means "All"
+    } catch (e: any) {
+      setCategories([]);
+      setCatErr(e?.message ?? "Failed to load categories.");
+    } finally {
+      setCatLoading(false);
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setErr("");
 
     try {
+      // ✅ categories (safe even if table missing, but yours exists now)
+      await loadCategories();
+
       const st = await detectSellerTable();
       setSellerTable(st);
 
@@ -165,22 +201,23 @@ export default function SalesMetrics() {
         return;
       }
 
-      // sale_lines
+      // 3) sale_lines
       const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
       if (linesRes.error) throw linesRes.error;
 
       const linesRows = ((linesRes.data as any) ?? []) as SaleLineRow[];
       setSaleLines(linesRows);
 
-      // inventory costs
+      // 4) inventory costs + category ✅
       const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean))).map(Number);
       if (!itemIds.length) {
         setInv([]);
         return;
       }
 
-      const invRes = await supabase.from("inventory").select("id,cost").in("id", itemIds);
+      const invRes = await supabase.from(INVENTORY_TABLE).select(`id,cost,${INVENTORY_CATEGORY_COL}`).in("id", itemIds);
       if (invRes.error) throw invRes.error;
+
       setInv(((invRes.data as any) ?? []) as InvRow[]);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -208,7 +245,45 @@ export default function SalesMetrics() {
     return Array.from(ys).sort((a, b) => Number(b) - Number(a));
   }, [sales]);
 
-  // ✅ ONLY CHANGE (logic): All-time filter for Year / Month
+  const linesBySale = useMemo(() => {
+    const map = new Map<number, SaleLineRow[]>();
+    for (const l of saleLines) {
+      const sid = Number(l.sale_id);
+      const arr = map.get(sid) ?? [];
+      arr.push(l);
+      map.set(sid, arr);
+    }
+    return map;
+  }, [saleLines]);
+
+  const invById = useMemo(() => {
+    const map = new Map<number, InvRow>();
+    for (const r of inv) map.set(Number(r.id), r);
+    return map;
+  }, [inv]);
+
+  const invCostById = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const r of inv) map.set(Number(r.id), toNum(r.cost, 0));
+    return map;
+  }, [inv]);
+
+  // ✅ NEW: helper to get categories present in a sale
+  function saleMatchesSelectedCategories(saleId: number) {
+    if (!selectedCats.length) return true; // empty => All
+    const wanted = new Set(selectedCats.map((c) => c.toLowerCase()));
+
+    const ls = linesBySale.get(Number(saleId)) ?? [];
+    for (const l of ls) {
+      const item = invById.get(Number(l.item_id));
+      const cat = String((item as any)?.[INVENTORY_CATEGORY_COL] ?? "").trim();
+      if (!cat) continue;
+      if (wanted.has(cat.toLowerCase())) return true;
+    }
+    return false;
+  }
+
+  // ✅ filtered sales: year/month/seller + category multi-select
   const filteredSales = useMemo(() => {
     const allTime = year === "ALL" || month === "ALL";
 
@@ -224,26 +299,14 @@ export default function SalesMetrics() {
         const sName = (r.seller_name ?? "").trim();
         if (sName !== seller) return false;
       }
+
+      // ✅ category filter
+      if (!saleMatchesSelectedCategories(Number(r.id))) return false;
+
       return true;
     });
-  }, [sales, seller, year, month]);
-
-  const linesBySale = useMemo(() => {
-    const map = new Map<number, SaleLineRow[]>();
-    for (const l of saleLines) {
-      const sid = Number(l.sale_id);
-      const arr = map.get(sid) ?? [];
-      arr.push(l);
-      map.set(sid, arr);
-    }
-    return map;
-  }, [saleLines]);
-
-  const invCostById = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const r of inv) map.set(Number(r.id), toNum(r.cost, 0));
-    return map;
-  }, [inv]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sales, seller, year, month, selectedCats, linesBySale, invById]);
 
   const metrics = useMemo(() => {
     const count = filteredSales.length;
@@ -333,6 +396,12 @@ export default function SalesMetrics() {
     return `${monthName(month)} ${year}`;
   }, [year, month]);
 
+  const selectedCatsLabel = useMemo(() => {
+    if (!selectedCats.length) return "All categories";
+    if (selectedCats.length === 1) return selectedCats[0];
+    return `${selectedCats.length} categories`;
+  }, [selectedCats]);
+
   return (
     <div className="page smX">
       {/* ✅ VISUAL ONLY: Platinum / diamond black+white theme. Function unchanged. */}
@@ -344,11 +413,6 @@ export default function SalesMetrics() {
         }
         .smX > *{ position: relative; z-index: 2; }
 
-        /* =========================================================
-           DIAMOND STUDDED BACKDROP (VISUAL ONLY)
-           - Black/white/gray
-           - Subtle "flutter" shimmer
-           ========================================================= */
         .smX::before{
           content:"";
           position: fixed;
@@ -363,7 +427,6 @@ export default function SalesMetrics() {
           opacity: 1;
         }
 
-        /* Diamond pattern + sparkle caustics */
         .smX::after{
           content:"";
           position: fixed;
@@ -374,7 +437,6 @@ export default function SalesMetrics() {
           mix-blend-mode: screen;
           filter: saturate(0.85) contrast(1.12);
           background:
-            /* DIAMOND GRID (two diagonals) */
             repeating-linear-gradient(45deg,
               rgba(255,255,255,0.00) 0 18px,
               rgba(255,255,255,0.06) 19px,
@@ -385,7 +447,6 @@ export default function SalesMetrics() {
               rgba(255,255,255,0.05) 19px,
               rgba(255,255,255,0.00) 38px
             ),
-            /* sparkle flecks */
             radial-gradient(circle at 18% 22%, rgba(255,255,255,0.18), rgba(255,255,255,0.00) 22%),
             radial-gradient(circle at 72% 34%, rgba(255,255,255,0.14), rgba(255,255,255,0.00) 24%),
             radial-gradient(circle at 40% 68%, rgba(255,255,255,0.10), rgba(255,255,255,0.00) 28%);
@@ -404,9 +465,6 @@ export default function SalesMetrics() {
           .smX::after{ animation:none; }
         }
 
-        /* =========================================================
-           TOP AREA
-           ========================================================= */
         .smX .topRow{
           display:flex; align-items:flex-start; justify-content: space-between;
           gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
@@ -415,9 +473,6 @@ export default function SalesMetrics() {
           display:flex; gap: 10px; flex-wrap: wrap; align-items:center; justify-content:flex-end;
         }
 
-        /* =========================================================
-           DIAMOND TITLE (VISUAL ONLY)
-           ========================================================= */
         .salesTitleWrap{
           display: inline-flex;
           align-items: center;
@@ -433,7 +488,6 @@ export default function SalesMetrics() {
           line-height: 1.02;
           position: relative;
 
-          /* diamond gradient text */
           background: linear-gradient(90deg,
             rgba(255,255,255,0.98),
             rgba(210,210,210,0.98),
@@ -454,7 +508,6 @@ export default function SalesMetrics() {
           animation: titleDiamondSheen 2.8s linear infinite;
         }
 
-        /* shimmer sweep across title */
         .salesTitle::after{
           content:"";
           position:absolute;
@@ -510,9 +563,6 @@ export default function SalesMetrics() {
           .salesTitle{ font-size: 26px; }
         }
 
-        /* =========================================================
-           FILTERS + GRID
-           ========================================================= */
         .smX .filterRow{
           margin-top: 10px; display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
         }
@@ -522,7 +572,6 @@ export default function SalesMetrics() {
           margin-top: 12px; display:grid; grid-template-columns: repeat(12, 1fr); gap: 10px;
         }
 
-        /* KPI cards: platinum glass (visual only) */
         .smX .cardKpi{
           grid-column: span 6;
           padding: 12px;
@@ -574,9 +623,6 @@ export default function SalesMetrics() {
             0 12px 34px rgba(0,0,0,0.65);
         }
 
-        /* =========================================================
-           BUTTON POP: premium platinum pulse (visual-only)
-           ========================================================= */
         .btnPop{
           position: relative;
           isolation: isolate;
@@ -637,9 +683,6 @@ export default function SalesMetrics() {
           .salesTitle::after{ animation:none; }
         }
 
-        /* =========================================================
-           RECENT SALES LIST (function unchanged) - subtle platinum hover
-           ========================================================= */
         .smX .list{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.26); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; backdrop-filter: blur(12px); }
         .smX .saleRow{
           display:flex; justify-content: space-between; gap: 10px; padding: 10px 0;
@@ -656,7 +699,6 @@ export default function SalesMetrics() {
         }
         .smX .right{ text-align:right; flex: 0 0 auto; }
 
-        /* platinum frame per seller (visual only) */
         .saleGlow{
           position: relative;
           padding: 10px 0;
@@ -687,12 +729,10 @@ export default function SalesMetrics() {
           transform: scale(1);
         }
 
-        /* Slightly different tints (still black/white) */
         .saleGlow.chad::before{ filter: hue-rotate(8deg) brightness(1.02); }
         .saleGlow.devan::before{ filter: hue-rotate(-8deg) brightness(1.02); }
         .saleGlow.other::before{ filter: brightness(0.98); }
 
-        /* Modal */
         .smX .overlay{
           position: fixed; inset: 0; background: rgba(0,0,0,0.78);
           display:flex; align-items:flex-end; justify-content:center; padding: 10px; z-index: 500;
@@ -707,6 +747,47 @@ export default function SalesMetrics() {
           backdrop-filter: blur(14px);
         }
 
+        /* ✅ NEW: category multi select styling */
+        .catBox{
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(0,0,0,0.20);
+          border-radius: 16px;
+          padding: 10px;
+        }
+        .catRow{
+          display:flex;
+          gap: 10px;
+          align-items:center;
+          justify-content: space-between;
+          margin-bottom: 8px;
+          flex-wrap: wrap;
+        }
+        .catPills{
+          display:flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .catPill{
+          display:inline-flex;
+          align-items:center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.04);
+          cursor: pointer;
+          user-select:none;
+          font-weight: 900;
+          font-size: 12px;
+          color: rgba(255,255,255,0.86);
+        }
+        .catPill.active{
+          border-color: rgba(255,255,255,0.30);
+          background: rgba(255,255,255,0.10);
+          color: rgba(255,255,255,0.95);
+          box-shadow: 0 0 0 3px rgba(255,255,255,0.06);
+        }
+
         input, select, textarea { font-size: 16px; }
 
         @media (max-width: 820px){
@@ -717,7 +798,6 @@ export default function SalesMetrics() {
 
       <div className="topRow">
         <div>
-          {/* ✅ visual-only: diamond title (text updated to "Sales Metrics") */}
           <div className="salesTitleWrap">
             <h1 className="salesTitle">Sales Metrics</h1>
             <span className="salesBadge">PLATINUM</span>
@@ -727,7 +807,6 @@ export default function SalesMetrics() {
             Premium performance overview
           </div>
 
-          {/* Just a small visual label line (no behavior change) */}
           <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,0.74)" }}>
             {selectedSellerDisplay}
             {selectedSellerNickname ? <span style={{ color: "rgba(255,255,255,0.92)" }}> • {selectedSellerNickname}</span> : null}
@@ -735,11 +814,14 @@ export default function SalesMetrics() {
               {" "}
               • {timeLabel}
             </span>
+            <span className="muted" style={{ fontWeight: 800 }}>
+              {" "}
+              • {selectedCatsLabel}
+            </span>
           </div>
         </div>
 
         <div className="controls">
-          {/* ✅ visual-only: platinum glow/pulse */}
           <button className="btn btnPop" type="button" onClick={() => setAddOpen(true)}>
             + Add Salesperson
           </button>
@@ -756,7 +838,17 @@ export default function SalesMetrics() {
         </div>
       ) : null}
 
-      <div className="card" style={{ padding: 12, marginTop: 10, background: "rgba(0,0,0,0.26)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18, backdropFilter: "blur(12px)" }}>
+      <div
+        className="card"
+        style={{
+          padding: 12,
+          marginTop: 10,
+          background: "rgba(0,0,0,0.26)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: 18,
+          backdropFilter: "blur(12px)",
+        }}
+      >
         <div style={{ fontWeight: 950, marginBottom: 8 }}>Filters</div>
 
         <div className="filterRow">
@@ -765,7 +857,6 @@ export default function SalesMetrics() {
               Year
             </div>
 
-            {/* ✅ Added: ALL */}
             <select className="input" value={year} onChange={(e) => setYear(e.target.value)}>
               <option value="ALL">All time</option>
               {yearOptions.map((y) => (
@@ -781,7 +872,6 @@ export default function SalesMetrics() {
               Month
             </div>
 
-            {/* ✅ Added: ALL */}
             <select className="input" value={month} onChange={(e) => setMonth(e.target.value)}>
               <option value="ALL">All time</option>
               {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => (
@@ -805,6 +895,78 @@ export default function SalesMetrics() {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* ✅ NEW: Categories multi-select */}
+          <div className="full">
+            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+              Categories (multi-select)
+            </div>
+
+            <div className="catBox">
+              <div className="catRow">
+                <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
+                  {catLoading ? "Loading categories…" : catErr ? `Error: ${catErr}` : `${categories.length} categories`}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => setSelectedCats([])}
+                    disabled={!selectedCats.length}
+                    style={{ height: 38, borderRadius: 14 }}
+                  >
+                    All
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => setSelectedCats(categories)}
+                    disabled={!categories.length || selectedCats.length === categories.length}
+                    style={{ height: 38, borderRadius: 14 }}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => setSelectedCats([])}
+                    style={{ height: 38, borderRadius: 14 }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="catPills">
+                {categories.map((c) => {
+                  const active = selectedCats.some((x) => x.toLowerCase() === c.toLowerCase());
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`catPill ${active ? "active" : ""}`}
+                      onClick={() => {
+                        setSelectedCats((prev) => {
+                          const exists = prev.some((x) => x.toLowerCase() === c.toLowerCase());
+                          if (exists) return prev.filter((x) => x.toLowerCase() !== c.toLowerCase());
+                          return [...prev, c];
+                        });
+                      }}
+                    >
+                      {active ? "✓" : "+"} {c}
+                    </button>
+                  );
+                })}
+
+                {!categories.length && !catLoading ? (
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    No categories found. Add some in Inventory → “+ Add Category”.
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       </div>

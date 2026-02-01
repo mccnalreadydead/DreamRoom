@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
 type InventoryKey = "devan" | "chad";
-
 type DbRow = Record<string, any> & { id: number };
 
 const TABLE_BY_INVENTORY: Record<InventoryKey, string> = {
@@ -13,7 +12,7 @@ const TABLE_BY_INVENTORY: Record<InventoryKey, string> = {
 
 /**
  * IMPORTANT:
- * Your error says inventory does not have "name".
+ * Your error said inventory does not have "name".
  * So we map Devan's inventory label column to "item" by default.
  * If your column is actually "item_name" or something else,
  * change ONLY the `label` value below for devan.
@@ -22,6 +21,12 @@ const COLS: Record<InventoryKey, { label: string; qty: string; cost: string; res
   devan: { label: "item", qty: "qty", cost: "cost", resell: "resell" },
   chad: { label: "name", qty: "qty", cost: "cost", resell: "resell" },
 };
+
+// ✅ category column name for Devan's inventory table
+const CATEGORY_COL_DEVAN = "category";
+
+// ✅ categories table name
+const CATEGORIES_TABLE = "inventory_categories";
 
 function toNumber(v: any, fallback = 0) {
   const n = typeof v === "number" ? v : Number(String(v ?? "").trim());
@@ -61,6 +66,25 @@ export default function Inventory() {
   const [newCost, setNewCost] = useState(0);
   const [newResell, setNewResell] = useState(0);
 
+  // ✅ category system (dynamic)
+  const [categories, setCategories] = useState<string[]>([]);
+  const [catLoading, setCatLoading] = useState(false);
+  const [catError, setCatError] = useState<string | null>(null);
+
+  // filter + add category UI
+  const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
+
+  // ✅ Add Category modal (header)
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+
+  // ✅ Manage Categories modal (remove)
+  const [showManageCategories, setShowManageCategories] = useState(false);
+  const [catBusyName, setCatBusyName] = useState<string>("");
+
+  // new item category
+  const [newItemCategory, setNewItemCategory] = useState<string>(""); // "" = Uncategorized
+
   const tableName = TABLE_BY_INVENTORY[active];
   const cols = COLS[active];
 
@@ -68,17 +92,108 @@ export default function Inventory() {
     const v = r?.[cols.label];
     return (v ?? "").toString();
   }
-
   function getQty(r: DbRow) {
     return clampInt(toNumber(r?.[cols.qty], 0));
   }
-
   function getCost(r: DbRow) {
     return clampMoney(toNumber(r?.[cols.cost], 0));
   }
-
   function getResell(r: DbRow) {
     return clampMoney(toNumber(r?.[cols.resell], 0));
+  }
+
+  // ✅ category from inventory.category
+  function getCategory(r: DbRow) {
+    const v = r?.[CATEGORY_COL_DEVAN];
+    return (v ?? "").toString().trim();
+  }
+
+  async function fetchCategories() {
+    setCatLoading(true);
+    setCatError(null);
+
+    try {
+      const { data, error } = await supabase.from(CATEGORIES_TABLE).select("name");
+      if (error) throw error;
+
+      const list = (data ?? [])
+        .map((x: any) => String(x?.name ?? "").trim())
+        .filter(Boolean)
+        .sort((a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+      setCategories(list);
+    } catch (e: any) {
+      setCategories([]);
+      setCatError(e?.message ?? "Failed to load categories.");
+    } finally {
+      setCatLoading(false);
+    }
+  }
+
+  async function addCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+
+    setCatError(null);
+    setError(null);
+
+    try {
+      // prevent duplicates (client-side)
+      const exists = categories.some((c) => c.toLowerCase() === name.toLowerCase());
+      if (exists) {
+        setCatError("That category already exists.");
+        return;
+      }
+
+      const { error } = await supabase.from(CATEGORIES_TABLE).insert({ name });
+      if (error) throw error;
+
+      setNewCategoryName("");
+      await fetchCategories();
+      setShowAddCategory(false);
+    } catch (e: any) {
+      setCatError(e?.message ?? "Failed to add category.");
+    }
+  }
+
+  // ✅ Remove category: delete from inventory_categories + clear from inventory items
+  async function removeCategory(name: string) {
+    const n = name.trim();
+    if (!n) return;
+
+    const ok = window.confirm(
+      `Remove category "${n}"?\n\nThis will also set all items in your inventory that use this category to "Uncategorized".`
+    );
+    if (!ok) return;
+
+    setCatError(null);
+    setError(null);
+    setCatBusyName(n);
+
+    try {
+      // 1) Clear category on all Devan inventory items that match this category
+      const clearRes = await supabase
+        .from(TABLE_BY_INVENTORY.devan)
+        .update({ [CATEGORY_COL_DEVAN]: "" } as any)
+        .eq(CATEGORY_COL_DEVAN, n);
+
+      if (clearRes.error) throw clearRes.error;
+
+      // 2) Delete category from categories table
+      const delRes = await supabase.from(CATEGORIES_TABLE).delete().eq("name", n);
+      if (delRes.error) throw delRes.error;
+
+      // 3) Refresh categories + refresh rows (so UI immediately matches)
+      await fetchCategories();
+      await fetchRows("devan");
+
+      // If you were filtering by the removed category, pop back to "All"
+      setCategoryFilter((prev) => (prev.toLowerCase() === n.toLowerCase() ? "__all__" : prev));
+    } catch (e: any) {
+      setCatError(e?.message ?? "Failed to remove category.");
+    } finally {
+      setCatBusyName("");
+    }
   }
 
   async function fetchRows(which: InventoryKey = active) {
@@ -114,12 +229,37 @@ export default function Inventory() {
     setError(null);
     setQuery("");
     setPage(1);
+    setCategoryFilter("__all__");
+
+    if (active === "devan") {
+      fetchCategories();
+    } else {
+      setCategories([]);
+      setCatError(null);
+      setCatLoading(false);
+    }
+
     fetchRows(active);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
   const totalResaleValue = useMemo(() => {
     return rows.reduce((sum, r) => sum + getQty(r) * getResell(r), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, active]);
+
+  const totalInventoryCost = useMemo(() => {
+    return rows.reduce((sum, r) => sum + getQty(r) * getCost(r), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, active]);
+
+  const reorderProfits = useMemo(() => {
+    return rows.reduce((sum, r) => {
+      const qty = getQty(r);
+      const cost = getCost(r);
+      const resell = getResell(r);
+      return sum + qty * Math.max(0, resell - cost);
+    }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, active]);
 
@@ -172,6 +312,10 @@ export default function Inventory() {
         [cols.resell]: clampMoney(toNumber(newResell, 0)),
       };
 
+      if (active === "devan") {
+        payload[CATEGORY_COL_DEVAN] = (newItemCategory ?? "").toString().trim(); // "" = Uncategorized
+      }
+
       const { data, error } = await supabase.from(tableName).insert(payload).select("*").single();
       if (error) throw error;
 
@@ -188,6 +332,7 @@ export default function Inventory() {
       setNewQty(1);
       setNewCost(0);
       setNewResell(0);
+      setNewItemCategory("");
       setPage(1);
     } catch (e: any) {
       setError(e?.message ?? "Failed to add item.");
@@ -196,14 +341,24 @@ export default function Inventory() {
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
 
     return rows.filter((r) => {
       const label = getLabel(r).toLowerCase();
-      return label.includes(q);
+      const okSearch = !q || label.includes(q);
+
+      if (active !== "devan") return okSearch;
+
+      const cat = getCategory(r);
+      const catKey = cat || "__uncat__";
+      const want = categoryFilter;
+
+      const okCat =
+        want === "__all__" ? true : want === "__uncat__" ? catKey === "__uncat__" : catKey.toLowerCase() === want.toLowerCase();
+
+      return okSearch && okCat;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, query, active]);
+  }, [rows, query, active, categoryFilter]);
 
   const totalPages = useMemo(() => {
     return Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
@@ -211,7 +366,7 @@ export default function Inventory() {
 
   useEffect(() => {
     setPage(1);
-  }, [query, active]);
+  }, [query, active, categoryFilter]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -223,6 +378,11 @@ export default function Inventory() {
     return filteredRows.slice(start, start + PAGE_SIZE);
   }, [filteredRows, page]);
 
+  const categoryOptions = useMemo(() => {
+    const uniq = Array.from(new Set(categories.map((c) => c.trim()).filter(Boolean)));
+    return uniq;
+  }, [categories]);
+
   return (
     <div className="inv-wrap inv-underwater">
       <style>{css}</style>
@@ -233,13 +393,42 @@ export default function Inventory() {
             Inventory
             <span className="invTitleShimmer" aria-hidden="true" />
           </h1>
-          <span className="inv-pill">Total Resale Value: {money(totalResaleValue)}</span>
+
+          <div className="invPillsTop">
+            <span className="inv-pill inv-pillShine">
+              Total Resale Value: {money(totalResaleValue)}
+              <span className="pillShimmer" aria-hidden="true" />
+            </span>
+
+            <span className="inv-pill inv-pillShine inv-pillAlt">
+              Inventory Cost: {money(totalInventoryCost)}
+              <span className="pillShimmer" aria-hidden="true" />
+            </span>
+
+            <span className="inv-pill inv-pillShine inv-pillAlt">
+              Re-order Profits: {money(reorderProfits)}
+              <span className="pillShimmer" aria-hidden="true" />
+            </span>
+          </div>
         </div>
 
         <div className="inv-actions">
           <button className="btn btnGlow" onClick={() => setShowAdd(true)}>
             + Add Item
           </button>
+
+          {/* ✅ Add Category + Manage Categories (Devan only) */}
+          {active === "devan" ? (
+            <>
+              <button className="btn ghost btnGlowSoft" onClick={() => setShowAddCategory(true)}>
+                + Add Category
+              </button>
+              <button className="btn ghost btnGlowSoft" onClick={() => setShowManageCategories(true)}>
+                Manage Categories
+              </button>
+            </>
+          ) : null}
+
           <button className="btn ghost btnGlowSoft" onClick={() => fetchRows(active)} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
@@ -255,7 +444,31 @@ export default function Inventory() {
         </button>
       </div>
 
-      {/* ✅ Search stays on top. Pager moved to bottom (per request). */}
+      {active === "devan" ? (
+        <div className="inv-catTabs">
+          <button className={`catTab ${categoryFilter === "__all__" ? "active" : ""}`} onClick={() => setCategoryFilter("__all__")}>
+            All
+          </button>
+
+          <button className={`catTab ${categoryFilter === "__uncat__" ? "active" : ""}`} onClick={() => setCategoryFilter("__uncat__")}>
+            Uncategorized
+          </button>
+
+          {categoryOptions.map((c) => (
+            <button
+              key={c}
+              className={`catTab ${categoryFilter.toLowerCase() === c.toLowerCase() ? "active" : ""}`}
+              onClick={() => setCategoryFilter(c)}
+            >
+              {c}
+            </button>
+          ))}
+
+          {catLoading ? <span className="catMeta">Loading categories…</span> : null}
+          {catError ? <span className="catMeta catErr">{catError}</span> : null}
+        </div>
+      ) : null}
+
       <div className="inv-toolbar">
         <div className="searchWrap">
           <span className="searchIcon" aria-hidden="true">
@@ -284,6 +497,7 @@ export default function Inventory() {
           <div>Cost</div>
           <div>Resell</div>
           <div>Status</div>
+          {active === "devan" ? <div>Type</div> : null}
           <div className="right">Actions</div>
         </div>
 
@@ -299,10 +513,10 @@ export default function Inventory() {
             const resell = getResell(r);
             const low = qty < 2;
             const status = low ? "Low" : "OK";
+            const cat = active === "devan" ? getCategory(r) : "";
 
             return (
               <div key={r.id} className="row">
-                {/* Desktop cells */}
                 <div className="cell item">
                   <div className="name nameGlow">{label}</div>
                 </div>
@@ -353,7 +567,30 @@ export default function Inventory() {
                   <span className={`badge ${low ? "low" : "ok"}`}>{status}</span>
                 </div>
 
-                {/* ✅ SINGLE actions element (prevents duplicate delete buttons on mobile) */}
+                {/* ✅ existing items can be categorized here (Devan only) */}
+                {active === "devan" ? (
+                  <div className="cell type">
+                    <select
+                      className="inp pill catSelect"
+                      value={cat}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, [CATEGORY_COL_DEVAN]: v } : x)));
+                        // fire-and-forget save; UI stays snappy
+                        void saveRow(r.id, { [CATEGORY_COL_DEVAN]: v } as any);
+                      }}
+                      aria-label="Category"
+                    >
+                      <option value="">Uncategorized</option>
+                      {categoryOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+
                 <div className="actionOne">
                   <button className="btn danger btnGlowDanger delBtn" onClick={() => deleteRow(r.id)}>
                     Delete
@@ -361,14 +598,13 @@ export default function Inventory() {
                   {savingId === r.id && <span className="saving savingOne">Saving…</span>}
                 </div>
 
-                {/* Mobile slim row */}
                 <div className="mobileRow">
                   <div className="mTop">
                     <div className="mName nameGlow">{label}</div>
                     <span className={`badge ${low ? "low" : "ok"}`}>{status}</span>
                   </div>
 
-                  <div className="mGrid">
+                  <div className={`mGrid ${active === "devan" ? "mGridCat" : ""}`}>
                     <div className="mField">
                       <div className="mLabel">Qty</div>
                       <input
@@ -413,6 +649,29 @@ export default function Inventory() {
                         onBlur={() => saveRow(r.id, { [cols.resell]: resell } as any)}
                       />
                     </div>
+
+                    {active === "devan" ? (
+                      <div className="mField">
+                        <div className="mLabel">Type</div>
+                        <select
+                          className="inp mini catSelect"
+                          value={cat}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, [CATEGORY_COL_DEVAN]: v } : x)));
+                            void saveRow(r.id, { [CATEGORY_COL_DEVAN]: v } as any);
+                          }}
+                          aria-label="Category"
+                        >
+                          <option value="">Uncategorized</option>
+                          {categoryOptions.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -420,7 +679,6 @@ export default function Inventory() {
           })}
         </div>
 
-        {/* ✅ Bottom pager: ONLY Prev / Next (one page backward/forward) */}
         <div className="inv-bottomPager">
           <div className="pagerInfo">
             Showing{" "}
@@ -477,6 +735,22 @@ export default function Inventory() {
                 <label>Resell</label>
                 <input className="inp" type="number" inputMode="decimal" value={newResell} onChange={(e) => setNewResell(clampMoney(toNumber(e.target.value, 0)))} />
               </div>
+
+              {/* category select */}
+              {active === "devan" ? (
+                <div className="field modalCat">
+                  <label>Category</label>
+                  <select className="inp catSelect" value={newItemCategory} onChange={(e) => setNewItemCategory(e.target.value)}>
+                    <option value="">Uncategorized</option>
+                    {categoryOptions.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  {catError ? <div className="catInlineErr">{catError}</div> : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="modalActions">
@@ -490,6 +764,98 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      {/* Add Category Modal */}
+      {showAddCategory && active === "devan" ? (
+        <div className="modalOverlay" onMouseDown={() => setShowAddCategory(false)}>
+          <div className="modal modalSmall" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modalTop">
+              <div className="modalTitle">Add Category</div>
+              <button className="iconBtn" onClick={() => setShowAddCategory(false)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div className="modalBody">
+              <div className="field">
+                <label>Category name</label>
+                <input className="inp" value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="e.g. Cologne" autoFocus />
+              </div>
+              {catError ? <div className="catInlineErr">{catError}</div> : null}
+            </div>
+
+            <div className="modalActions">
+              <button className="btn ghost btnGlowSoft" onClick={() => setShowAddCategory(false)}>
+                Cancel
+              </button>
+              <button className="btn btnGlow" onClick={() => void addCategory()} disabled={!newCategoryName.trim() || catLoading}>
+                {catLoading ? "Adding…" : "Add Category"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ✅ Manage Categories Modal */}
+      {showManageCategories && active === "devan" ? (
+        <div className="modalOverlay" onMouseDown={() => setShowManageCategories(false)}>
+          <div className="modal modalSmall" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modalTop">
+              <div className="modalTitle">Manage Categories</div>
+              <button className="iconBtn" onClick={() => setShowManageCategories(false)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div className="modalBody">
+              <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,.65)", marginBottom: 10 }}>
+                Removing a category will set any matching items to <b>Uncategorized</b>.
+              </div>
+
+              {catError ? <div className="catInlineErr">{catError}</div> : null}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {categoryOptions.length ? (
+                  categoryOptions.map((c) => (
+                    <div
+                      key={c}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,.12)",
+                        background: "rgba(255,255,255,.03)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 900 }}>{c}</div>
+                      <button
+                        className="btn danger btnGlowDanger"
+                        onClick={() => void removeCategory(c)}
+                        disabled={!!catBusyName && catBusyName.toLowerCase() === c.toLowerCase()}
+                      >
+                        {catBusyName && catBusyName.toLowerCase() === c.toLowerCase() ? "Removing…" : "Remove"}
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty" style={{ padding: 10 }}>
+                    No categories yet. Add one first.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modalActions">
+              <button className="btn ghost btnGlowSoft" onClick={() => setShowManageCategories(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -629,14 +995,16 @@ const css = `
 
 /* Header */
 .inv-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 10px; }
-.inv-title{ min-width: 0; }
+.inv-title{ min-width: 0; display:flex; flex-direction: column; gap: 8px; }
+
+.invPillsTop{ display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
 
 .invGlowTitle{
   position: relative;
   display: inline-block;
   font-size: 30px;
   line-height: 1.1;
-  margin: 0 0 8px 0;
+  margin: 0 0 0 0;
   letter-spacing: .4px;
   font-weight: 950;
 
@@ -671,9 +1039,63 @@ const css = `
   100% { transform: translateX(70%) skewX(-10deg); opacity: 0.55; }
 }
 
-.inv-pill{ display:inline-flex; align-items:center; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(0,210,255,.22); background: rgba(0,210,255,.06); color: rgba(200,245,255,.92); font-size: 13px; max-width: 100%; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-pill{
+  display:inline-flex;
+  align-items:center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,210,255,.22);
+  background: rgba(0,210,255,.06);
+  color: rgba(200,245,255,.92);
+  font-size: 13px;
+  max-width: 100%;
+  overflow:hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.inv-actions{ display:flex; gap:10px; }
+.inv-pillShine{
+  position: relative;
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.03),
+    0 0 18px rgba(0,210,255,0.12),
+    0 16px 40px rgba(0,0,0,0.25);
+}
+.inv-pillAlt{
+  border-color: rgba(140,90,255,.24);
+  background: rgba(140,90,255,.06);
+  color: rgba(235,225,255,.92);
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.03),
+    0 0 18px rgba(140,90,255,0.12),
+    0 16px 40px rgba(0,0,0,0.25);
+}
+.pillShimmer{
+  content:"";
+  position:absolute;
+  inset:-2px -18px -2px -18px;
+  border-radius: 999px;
+  pointer-events:none;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255,255,255,0.00) 35%,
+    rgba(255,255,255,0.26) 45%,
+    rgba(255,255,255,0.06) 55%,
+    transparent 70%
+  );
+  transform: translateX(-70%) skewX(-10deg);
+  mix-blend-mode: screen;
+  opacity: 0.65;
+  animation: pillSweep 3.2s linear infinite;
+}
+@keyframes pillSweep{
+  0%   { transform: translateX(-70%) skewX(-10deg); opacity: 0.50; }
+  45%  { opacity: 0.95; }
+  100% { transform: translateX(70%) skewX(-10deg); opacity: 0.55; }
+}
+
+.inv-actions{ display:flex; gap:10px; flex-wrap: wrap; }
 
 /* Buttons */
 .btn{
@@ -733,6 +1155,7 @@ const css = `
 
 @media (prefers-reduced-motion: reduce){
   .invTitleShimmer{ animation:none; }
+  .pillShimmer{ animation:none; }
   .btnGlow{ animation:none; }
 }
 
@@ -740,6 +1163,37 @@ const css = `
 .inv-tabs{ display:flex; gap:10px; margin: 8px 0 14px; flex-wrap: wrap; }
 .tab{ padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); color: rgba(255,255,255,.86); cursor:pointer; font-weight: 700; }
 .tab.active{ border-color: rgba(0,210,255,.28); background: rgba(0,210,255,.07); color: rgba(200,245,255,.96); box-shadow: 0 0 0 3px rgba(0,210,255,0.06); }
+
+/* Category tabs row */
+.inv-catTabs{
+  display:flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items:center;
+  margin: 0 0 10px;
+}
+.catTab{
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.86);
+  cursor:pointer;
+  font-weight: 850;
+}
+.catTab.active{
+  border-color: rgba(0,210,255,.28);
+  background: rgba(0,210,255,.07);
+  color: rgba(200,245,255,.96);
+  box-shadow: 0 0 0 3px rgba(0,210,255,0.06);
+}
+.catMeta{
+  font-size: 12px;
+  font-weight: 850;
+  color: rgba(255,255,255,.6);
+  margin-left: 6px;
+}
+.catErr{ color: rgba(255, 170, 170, .95); }
 
 .inv-error{ padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255, 90, 90, .25); background: rgba(255, 60, 60, .08); margin-bottom: 12px; }
 
@@ -793,7 +1247,16 @@ const css = `
 
 /* Card + table */
 .inv-card{ border-radius: 18px; border: 1px solid rgba(0,210,255,.16); background: rgba(10,10,12,.55); overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
-.inv-tableHead{ display:grid; grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr; gap: 10px; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.7); font-weight: 700; font-size: 13px; }
+.inv-tableHead{
+  display:grid;
+  grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  color: rgba(255,255,255,.7);
+  font-weight: 700;
+  font-size: 13px;
+}
 .inv-tableHead .right{ text-align: right; }
 
 .inv-list{ display:flex; flex-direction: column; }
@@ -808,6 +1271,8 @@ const css = `
 }
 .row:last-child{ border-bottom: none; }
 
+.row > .cell.type{ min-width: 150px; }
+
 .cell.item .name{ padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.03); font-weight: 700; color: rgba(255,255,255,.92); }
 
 .nameGlow{
@@ -820,6 +1285,21 @@ const css = `
 .inp:focus{ border-color: rgba(0,210,255, .35); box-shadow: 0 0 0 4px rgba(0,210,255, .10); }
 .inp.danger{ border-color: rgba(255, 90, 90, .55); box-shadow: 0 0 0 4px rgba(255, 90, 90, .10); }
 
+/* Category select: black bg + white text */
+.catSelect{
+  background: rgba(0,0,0,.78) !important;
+  color: rgba(255,255,255,.92) !important;
+  border-color: rgba(255,255,255,.16) !important;
+}
+.catSelect:focus{
+  border-color: rgba(0,210,255, .35) !important;
+  box-shadow: 0 0 0 4px rgba(0,210,255, .10) !important;
+}
+.catSelect option{
+  background: #000;
+  color: #fff;
+}
+
 .badge{ display:inline-flex; align-items:center; justify-content:center; padding: 6px 10px; border-radius: 999px; font-weight: 800; font-size: 12px; width: fit-content; }
 .badge.ok{ border: 1px solid rgba(0,210,255,.22); background: rgba(0,210,255,.06); color: rgba(200,245,255,.92); }
 .badge.low{ border: 1px solid rgba(255, 90, 90, .35); background: rgba(255, 60, 60, .10); color: rgba(255, 170, 170, .95); }
@@ -827,9 +1307,7 @@ const css = `
 .saving{ font-size: 12px; color: rgba(255,255,255,.55); }
 .empty{ padding: 18px 16px; color: rgba(255,255,255,.6); font-weight: 650; }
 
-/* ✅ Single actions slot (desktop) */
 .actionOne{
-  grid-column: 6;
   display:flex;
   align-items:center;
   justify-content:flex-end;
@@ -838,7 +1316,6 @@ const css = `
 .delBtn{ width: auto; }
 .savingOne{ white-space: nowrap; }
 
-/* Bottom pager */
 .inv-bottomPager{
   padding: 12px 14px;
   border-top: 1px solid rgba(255,255,255,0.08);
@@ -888,12 +1365,10 @@ const css = `
   .cell{ display:none; }
   .mobileRow{ display:block; }
 
-  /* ✅ keep the ONE delete button small on mobile */
   .actionOne{
     position:absolute;
     top: 10px;
     right: 12px;
-    grid-column: auto;
     justify-content:flex-end;
     z-index: 5;
   }
@@ -902,16 +1377,15 @@ const css = `
     padding: 8px 10px;
     border-radius: 12px;
   }
-  .savingOne{ display:none; } /* keeps it slim; still works on desktop */
+  .savingOne{ display:none; }
 
-  /* Slimmer “card” feel */
   .mTop{
     display:flex;
     align-items:center;
     justify-content:space-between;
     gap: 10px;
     margin-bottom: 8px;
-    padding-right: 74px; /* space so name doesn't collide with delete */
+    padding-right: 74px;
   }
   .mName{
     font-weight: 850;
@@ -928,6 +1402,9 @@ const css = `
     grid-template-columns: 1fr 1fr 1fr;
     gap: 8px;
     align-items:end;
+  }
+  .mGrid.mGridCat{
+    grid-template-columns: 1fr 1fr;
   }
 
   .mField{ display:flex; flex-direction: column; gap: 5px; min-width: 0; }
@@ -950,11 +1427,23 @@ const css = `
 /* Modal */
 .modalOverlay{ position: fixed; inset: 0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding: 18px; z-index: 50; }
 .modal{ width: 560px; max-width: 100%; border-radius: 18px; border: 1px solid rgba(255,255,255,.12); background: rgba(12,12,14,.95); box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow:hidden; }
+.modalSmall{ width: 460px; }
 .modalTop{ display:flex; align-items:center; justify-content:space-between; padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.08); }
 .modalTitle{ font-weight: 900; font-size: 16px; }
 .iconBtn{ border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: rgba(255,255,255,.9); border-radius: 10px; padding: 6px 10px; cursor:pointer; font-weight: 900; }
 .modalGrid{ padding: 14px 16px; display:grid; grid-template-columns: 1.5fr .7fr .7fr .7fr; gap: 10px; }
 .field label{ display:block; font-size: 11px; color: rgba(255,255,255,.55); font-weight: 800; margin-bottom: 6px; }
+.modalCat{ grid-column: 1 / -1; }
+
+.modalBody{ padding: 14px 16px; }
+
+.catInlineErr{
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 850;
+  color: rgba(255,170,170,.95);
+}
+
 .modalActions{ padding: 14px 16px; display:flex; justify-content:flex-end; gap: 10px; border-top: 1px solid rgba(255,255,255,.08); }
 @media (max-width: 760px){ .modalGrid{ grid-template-columns: 1fr 1fr; } }
 `;
