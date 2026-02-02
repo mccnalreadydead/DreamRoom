@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
@@ -273,7 +273,7 @@ export default function Dashboard() {
     const padB = 42;
 
     const n = monthly.length;
-    const values = monthly.map((m) => Number.isFinite(m.total) ? m.total : 0);
+    const values = monthly.map((m) => (Number.isFinite(m.total) ? m.total : 0));
 
     // include 0 so the chart feels stable; also handle negatives
     const minVal = Math.min(0, ...values);
@@ -454,13 +454,7 @@ export default function Dashboard() {
 
         {/* ✅ LINE GRAPH (replaces bar chart) */}
         <div className="dash-lineWrap" aria-label="Monthly profit line chart">
-          <svg
-            className="dash-lineSvg"
-            viewBox={`0 0 ${lineChart.W} ${lineChart.H}`}
-            preserveAspectRatio="none"
-            role="img"
-            aria-label="Monthly profit line chart"
-          >
+          <svg className="dash-lineSvg" viewBox={`0 0 ${lineChart.W} ${lineChart.H}`} preserveAspectRatio="none" role="img">
             <defs>
               <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgba(212,175,55,0.22)" />
@@ -517,9 +511,7 @@ export default function Dashboard() {
             />
 
             {/* area */}
-            {lineChart.pts.length ? (
-              <path d={lineChart.areaD} fill="url(#areaFill)" opacity={1} />
-            ) : null}
+            {lineChart.pts.length ? <path d={lineChart.areaD} fill="url(#areaFill)" /> : null}
 
             {/* line */}
             {lineChart.pts.length ? (
@@ -537,9 +529,15 @@ export default function Dashboard() {
             {/* points */}
             {lineChart.pts.map((p, idx) => (
               <g key={idx}>
-                <circle cx={p.x} cy={p.y} r="5.2" fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r="5.2"
+                  fill="rgba(0,0,0,0.75)"
+                  stroke="rgba(255,255,255,0.18)"
+                  strokeWidth="1"
+                />
                 <circle cx={p.x} cy={p.y} r="3.6" fill="rgba(255,220,120,0.92)" filter="url(#glow)" />
-                {/* tooltip via <title> */}
                 <title>{`${p.label}: ${money(p.v)}`}</title>
               </g>
             ))}
@@ -570,195 +568,6 @@ export default function Dashboard() {
       <style>{`
         .dash-page{ position: relative; isolation: isolate; }
         .dash-page > *{ position: relative; z-index: 1; }
-
-        /* =========================================================
-           ULTRA INTENSE PURPLE GLOW + PURPLE RAIN (VISUAL ONLY)
-           ========================================================= */
-        .dash-page::before{
-          content:"";
-          position:absolute;
-          inset:-40px;
-          z-index:0;
-          pointer-events:none;
-
-          background:
-            radial-gradient(1200px 720px at 20% 0%, rgba(185,120,255,0.42), transparent 62%),
-            radial-gradient(1100px 680px at 85% 18%, rgba(120,70,255,0.34), transparent 64%),
-            radial-gradient(1200px 760px at 55% 110%, rgba(90,35,220,0.40), transparent 62%),
-            radial-gradient(900px 520px at 50% 40%, rgba(220,160,255,0.16), transparent 60%),
-            radial-gradient(700px 460px at 12% 82%, rgba(0,210,255,0.07), transparent 65%),
-            linear-gradient(180deg, rgba(20,8,40,0.35), rgba(0,0,0,0.18)),
-
-            radial-gradient(circle,
-              rgba(255,255,255,0.18) 0 6px,
-              rgba(210,150,255,0.78) 14px,
-              rgba(140,90,255,0.40) 38px,
-              rgba(90,35,220,0.22) 70px,
-              transparent 115px),
-            radial-gradient(circle,
-              rgba(255,255,255,0.16) 0 6px,
-              rgba(190,120,255,0.74) 14px,
-              rgba(120,70,255,0.38) 36px,
-              rgba(90,35,220,0.20) 68px,
-              transparent 112px),
-            radial-gradient(circle,
-              rgba(255,255,255,0.16) 0 6px,
-              rgba(220,160,255,0.70) 14px,
-              rgba(150,100,255,0.36) 36px,
-              rgba(95,45,230,0.20) 68px,
-              transparent 112px);
-
-          background-size:
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            620px 1400px,
-            700px 1600px,
-            660px 1500px;
-
-          background-position:
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            12% 140%,
-            52% 160%,
-            86% 150%;
-
-          filter: blur(14px) saturate(1.25);
-          opacity: 1;
-          mix-blend-mode: screen;
-          transform: translateZ(0);
-
-          animation:
-            dashAuraPulse 6.2s ease-in-out infinite,
-            dashOrbsRise 26s linear infinite;
-        }
-
-        .dash-page::after{
-          content:"";
-          position:absolute;
-          inset:-44px;
-          z-index:0;
-          pointer-events:none;
-
-          background:
-            radial-gradient(circle, rgba(210,150,255,0.28) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(170,110,255,0.24) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(120,70,255,0.22) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(220,160,255,0.22) 0 1px, transparent 6px),
-
-            radial-gradient(circle, rgba(230,190,255,0.18) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(190,130,255,0.16) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(140,90,255,0.14) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(90,35,220,0.12) 0 1px, transparent 4px),
-
-            repeating-linear-gradient(
-              165deg,
-              rgba(190,130,255,0.10) 0px,
-              rgba(190,130,255,0.10) 1px,
-              transparent 1px,
-              transparent 14px
-            );
-
-          background-size:
-            260px 520px,
-            280px 560px,
-            300px 600px,
-            320px 640px,
-            160px 260px,
-            170px 280px,
-            180px 300px,
-            190px 320px,
-            100% 100%;
-
-          background-position:
-            22% -60%,
-            52% -110%,
-            76% -90%,
-            92% -130%,
-            12% -40%,
-            38% -180%,
-            64% -120%,
-            88% -240%,
-            0% 0%;
-
-          mix-blend-mode: screen;
-          opacity: 0.92;
-          filter: blur(0.10px) saturate(1.25);
-          transform: translateZ(0);
-
-          animation:
-            dashRainFallFast 0.95s linear infinite,
-            dashRainFallMed 1.35s linear infinite,
-            dashRainFallSlow 2.30s linear infinite,
-            dashRainDrift 1.10s ease-in-out infinite,
-            dashRainFlicker 0.70s ease-in-out infinite;
-        }
-
-        @keyframes dashAuraPulse{
-          0%   { transform: translate3d(0px,0px,0px) scale(1);   filter: blur(14px) saturate(1.15); opacity: 0.92; }
-          35%  { transform: translate3d(6px,-3px,0px) scale(1.03); filter: blur(15px) saturate(1.35); opacity: 1; }
-          70%  { transform: translate3d(-5px,2px,0px) scale(1.02); filter: blur(16px) saturate(1.45); opacity: 0.98; }
-          100% { transform: translate3d(0px,0px,0px) scale(1);   filter: blur(14px) saturate(1.15); opacity: 0.92; }
-        }
-        @keyframes dashOrbsRise{
-          0%{
-            background-position:
-              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
-              12% 140%,52% 160%,86% 150%;
-          }
-          100%{
-            background-position:
-              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
-              12% -120%,52% -150%,86% -135%;
-          }
-        }
-        @keyframes dashRainFallFast{
-          0%{
-            background-position:
-              22% -60%,52% -110%,76% -90%,92% -130%,
-              12% -40%,38% -180%,64% -120%,88% -240%,
-              0% 0%;
-          }
-          100%{
-            background-position:
-              22% 320%,52% 360%,76% 340%,92% 380%,
-              12% 520%,38% 580%,64% 560%,88% 620%,
-              0% 0%;
-          }
-        }
-        @keyframes dashRainFallMed{ 0%{ transform: translate3d(0,0,0) scale(1); } 100%{ transform: translate3d(0,4px,0) scale(1.01);} }
-        @keyframes dashRainFallSlow{ 0%,100%{ filter: blur(0.10px) saturate(1.25);} 50%{ filter: blur(0.22px) saturate(1.45);} }
-        @keyframes dashRainDrift{
-          0%{ transform: translate3d(0,0,0) skewX(0deg); }
-          25%{ transform: translate3d(8px,-1px,0) skewX(-0.7deg); }
-          50%{ transform: translate3d(-10px,0px,0) skewX(0.9deg); }
-          75%{ transform: translate3d(7px,1px,0) skewX(-0.5deg); }
-          100%{ transform: translate3d(0,0,0) skewX(0deg); }
-        }
-        @keyframes dashRainFlicker{ 0%,100%{ opacity: 0.86;} 20%{ opacity:0.98;} 45%{ opacity:0.88;} 65%{ opacity:1;} 85%{ opacity:0.90;} }
-
-        @media (prefers-reduced-motion: reduce){
-          .dash-page::before, .dash-page::after{ animation:none; }
-        }
-
-        .dash-top{ align-items:center; gap:10px; flex-wrap: wrap; }
-        .dash-controls{ display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
-
-        .dash-sigil{
-          color: rgba(212,175,55,0.92);
-          font-weight: 900;
-          text-shadow:
-            0 0 24px rgba(190,130,255,0.40),
-            0 0 30px rgba(120,70,255,0.26),
-            0 0 18px rgba(212,175,55,0.25);
-        }
 
         /* Dropdown styling: black background + white text */
         .dash-rangeWrap{ display:flex; align-items:center; position: relative; }
@@ -793,6 +602,9 @@ export default function Dashboard() {
         }
         .dash-rangeSelect option{ background:#000; color:#fff; }
 
+        .dash-top{ align-items:center; gap:10px; flex-wrap: wrap; }
+        .dash-controls{ display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
+
         .dash-sub{
           margin-top: 10px;
           display:grid;
@@ -807,18 +619,6 @@ export default function Dashboard() {
         }
         .dash-kpiLabel{ font-size: 12px; font-weight: 900; color: rgba(255,255,255,0.70); }
         .dash-kpiValue{ margin-top: 6px; font-size: 18px; font-weight: 900; }
-        .dash-nextSmall{ margin-top: 6px; font-size: 12px; font-weight: 850; color: rgba(255,255,255,0.68); }
-
-        .dash-nextEvent{
-          border-color: rgba(var(--violet), 0.25);
-          background:
-            radial-gradient(220px 140px at 20% 10%, rgba(var(--violet),0.18), transparent 60%),
-            radial-gradient(220px 140px at 90% 60%, rgba(var(--pink),0.10), transparent 62%),
-            rgba(255,255,255,0.05);
-          box-shadow:
-            0 0 0 1px rgba(var(--violet),0.10) inset,
-            0 16px 40px rgba(var(--violet),0.10);
-        }
 
         .dash-card{
           margin-top: 10px;
