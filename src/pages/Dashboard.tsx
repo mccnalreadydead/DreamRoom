@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
-type RangeKey = "current" | "last" | "3" | "6" | "12";
+type RangeKey = "current" | "1" | "2" | "3" | "4" | "5" | "6" | "12" | "all";
 
-const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -13,7 +13,7 @@ function addMonths(d: Date, delta: number) {
   return new Date(d.getFullYear(), d.getMonth() + delta, 1);
 }
 function ymKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 function labelMonth(d: Date) {
   return `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`;
@@ -32,22 +32,23 @@ function money(n: number) {
 }
 
 type NextEvent = {
-  date: string;           // YYYY-MM-DD
-  title: string;          // derived from bullets/details
+  date: string; // YYYY-MM-DD
+  title: string;
   bullets: string[];
   details: string | null;
 };
 
-// ✅ Minimal shape we need for charting
 type ProfitRow = {
-  dateISO: string;   // YYYY-MM-DD
-  profit: number;    // computed from sale_lines + inventory.cost
+  dateISO: string; // YYYY-MM-DD
+  profit: number;
 };
 
 export default function Dashboard() {
   const [sales, setSales] = useState<ProfitRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  // ✅ dropdown-driven timeframe
   const [range, setRange] = useState<RangeKey>("6");
 
   // Next Event widget state
@@ -57,13 +58,11 @@ export default function Dashboard() {
 
   const now = new Date();
 
-  // ✅ THIS is the key fix: compute profit the SAME way Sales.tsx does
   async function loadSales() {
     setLoading(true);
     setErr("");
 
     try {
-      // 1) Load sales headers
       const salesRes = await supabase
         .from("sales")
         .select("id,sale_date,created_at")
@@ -81,26 +80,15 @@ export default function Dashboard() {
         return;
       }
 
-      // 2) Load sale lines
-      const linesRes = await supabase
-        .from("sale_lines")
-        .select("sale_id,item_id,units,price,fees")
-        .in("sale_id", saleIds);
-
+      const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
       if (linesRes.error) throw linesRes.error;
-
       const linesRows = (linesRes.data as any[]) ?? [];
 
-      // 3) Build inventory cost map for item_ids in lines
       const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean)));
 
       const costMap = new Map<number, number>();
       if (itemIds.length) {
-        const invRes = await supabase
-          .from("inventory")
-          .select("id,cost")
-          .in("id", itemIds);
-
+        const invRes = await supabase.from("inventory").select("id,cost").in("id", itemIds);
         if (invRes.error) throw invRes.error;
 
         for (const r of (invRes.data as any[]) ?? []) {
@@ -108,7 +96,6 @@ export default function Dashboard() {
         }
       }
 
-      // 4) Group lines by sale_id
       const linesBySale = new Map<number, any[]>();
       for (const l of linesRows) {
         const sid = Number(l.sale_id);
@@ -116,7 +103,6 @@ export default function Dashboard() {
         linesBySale.get(sid)!.push(l);
       }
 
-      // 5) Compute profit per sale, return {dateISO, profit}
       const computed: ProfitRow[] = salesRows.map((s) => {
         const sid = Number(s.id);
         const saleLines = linesBySale.get(sid) ?? [];
@@ -129,9 +115,7 @@ export default function Dashboard() {
           return sum + (price - fees - cost * u);
         }, 0);
 
-        const dateISO =
-          (String(s.sale_date ?? "").slice(0, 10) || "") ||
-          (String(s.created_at ?? "").slice(0, 10) || "");
+        const dateISO = (String(s.sale_date ?? "").slice(0, 10) || "") || (String(s.created_at ?? "").slice(0, 10) || "");
 
         return {
           dateISO: dateISO || "1970-01-01",
@@ -152,7 +136,6 @@ export default function Dashboard() {
     setEventLoading(true);
     setEventErr("");
 
-    // We expect calendar_notes(note_date, bullets[], details)
     const { data, error } = await supabase
       .from("calendar_notes")
       .select("note_date, bullets, details")
@@ -177,9 +160,7 @@ export default function Dashboard() {
     const bullets: string[] = Array.isArray(row.bullets) ? row.bullets.filter(Boolean).map(String) : [];
     const details: string | null = row.details != null ? String(row.details) : null;
 
-    const title =
-      bullets[0] ||
-      (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event");
+    const title = bullets[0] || (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event");
 
     setNextEvent({
       date: String(row.note_date),
@@ -197,7 +178,6 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Date helper uses our computed dateISO
   function getDate(s: ProfitRow): Date | null {
     const raw = s?.dateISO ?? null;
     if (!raw) return null;
@@ -210,16 +190,36 @@ export default function Dashboard() {
     return Number.isFinite(n) ? n : 0;
   }
 
-  // Window
+  const earliestMonth = useMemo(() => {
+    let min: Date | null = null;
+    for (const s of sales) {
+      const d = getDate(s);
+      if (!d) continue;
+      const m = startOfMonth(d);
+      if (!min || m.getTime() < min.getTime()) min = m;
+    }
+    return min;
+  }, [sales]);
+
   const windowMonths = useMemo(() => {
     const curStart = startOfMonth(now);
 
     if (range === "current") return { start: curStart, count: 1, title: "Current Month" };
-    if (range === "last") return { start: addMonths(curStart, -1), count: 1, title: "Last Month" };
+
+    // Rolling windows INCLUDING current month
+    if (range === "1") return { start: addMonths(curStart, -1), count: 2, title: "Last 1 Month" };
+    if (range === "2") return { start: addMonths(curStart, -1), count: 2, title: "Last 2 Months" };
     if (range === "3") return { start: addMonths(curStart, -2), count: 3, title: "Last 3 Months" };
+    if (range === "4") return { start: addMonths(curStart, -3), count: 4, title: "Last 4 Months" };
+    if (range === "5") return { start: addMonths(curStart, -4), count: 5, title: "Last 5 Months" };
     if (range === "6") return { start: addMonths(curStart, -5), count: 6, title: "Last 6 Months" };
-    return { start: addMonths(curStart, -11), count: 12, title: "Last 12 Months" };
-  }, [range]);
+    if (range === "12") return { start: addMonths(curStart, -11), count: 12, title: "Last 1 Year" };
+
+    const start = earliestMonth ?? curStart;
+    const diff = (curStart.getFullYear() - start.getFullYear()) * 12 + (curStart.getMonth() - start.getMonth());
+    const count = Math.max(1, diff + 1);
+    return { start, count, title: "All Time" };
+  }, [range, now, earliestMonth]);
 
   const monthly = useMemo(() => {
     const { start, count } = windowMonths;
@@ -244,7 +244,87 @@ export default function Dashboard() {
   }, [sales, windowMonths]);
 
   const totalProfit = useMemo(() => monthly.reduce((a, m) => a + m.total, 0), [monthly]);
+
+  // For breakdown % calculation
   const maxVal = useMemo(() => Math.max(1, ...monthly.map((m) => m.total)), [monthly]);
+
+  const rangeOptions: { key: RangeKey; label: string }[] = useMemo(
+    () => [
+      { key: "current", label: "Current revenue" },
+      { key: "1", label: "1 month revenue" },
+      { key: "2", label: "2 months revenue" },
+      { key: "3", label: "3 months revenue" },
+      { key: "4", label: "4 months revenue" },
+      { key: "5", label: "5 months revenue" },
+      { key: "6", label: "6 months revenue" },
+      { key: "12", label: "1 year revenue" },
+      { key: "all", label: "All time revenue" },
+    ],
+    []
+  );
+
+  // ✅ Line chart geometry (SVG)
+  const lineChart = useMemo(() => {
+    const W = 920; // virtual width (viewBox)
+    const H = 260; // virtual height (viewBox)
+    const padL = 44;
+    const padR = 16;
+    const padT = 18;
+    const padB = 42;
+
+    const n = monthly.length;
+    const values = monthly.map((m) => Number.isFinite(m.total) ? m.total : 0);
+
+    // include 0 so the chart feels stable; also handle negatives
+    const minVal = Math.min(0, ...values);
+    const maxVal2 = Math.max(0, ...values);
+
+    // Add a little breathing room so points aren’t glued to edges
+    const range = Math.max(1, maxVal2 - minVal);
+    const minYVal = minVal - range * 0.08;
+    const maxYVal = maxVal2 + range * 0.12;
+
+    const plotW = Math.max(1, W - padL - padR);
+    const plotH = Math.max(1, H - padT - padB);
+
+    const xFor = (i: number) => {
+      if (n <= 1) return padL + plotW / 2;
+      return padL + (i / (n - 1)) * plotW;
+    };
+    const yFor = (v: number) => {
+      const t = (v - minYVal) / (maxYVal - minYVal || 1);
+      return padT + (1 - t) * plotH;
+    };
+
+    const pts = values.map((v, i) => ({ x: xFor(i), y: yFor(v), v, label: monthly[i].label }));
+
+    const d = pts
+      .map((p, i) => (i === 0 ? `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}` : `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`))
+      .join(" ");
+
+    // fill area under line (to baseline at 0)
+    const baselineY = yFor(0);
+    const areaD =
+      pts.length >= 2
+        ? `${d} L ${pts[pts.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)} L ${pts[0].x.toFixed(2)} ${baselineY.toFixed(
+            2
+          )} Z`
+        : `M ${pts[0]?.x.toFixed(2) ?? padL} ${baselineY.toFixed(2)} Z`;
+
+    // y grid lines (4)
+    const gridCount = 4;
+    const grid = Array.from({ length: gridCount + 1 }).map((_, i) => {
+      const t = i / gridCount;
+      const y = padT + t * plotH;
+      const val = maxYVal - t * (maxYVal - minYVal);
+      return { y, val };
+    });
+
+    // reduce x labels if lots of months
+    const labelStep = n <= 6 ? 1 : n <= 12 ? 2 : n <= 24 ? 3 : 4;
+
+    return { W, H, padL, padR, padT, padB, pts, d, areaD, baselineY, grid, labelStep };
+  }, [monthly]);
 
   return (
     <div className="page dash-page">
@@ -255,21 +335,15 @@ export default function Dashboard() {
         </div>
 
         <div className="dash-controls">
-          <button className={range === "current" ? "dash-pill active" : "dash-pill"} onClick={() => setRange("current")}>
-            Current
-          </button>
-          <button className={range === "last" ? "dash-pill active" : "dash-pill"} onClick={() => setRange("last")}>
-            Last
-          </button>
-          <button className={range === "3" ? "dash-pill active" : "dash-pill"} onClick={() => setRange("3")}>
-            3 mo
-          </button>
-          <button className={range === "6" ? "dash-pill active" : "dash-pill"} onClick={() => setRange("6")}>
-            6 mo
-          </button>
-          <button className={range === "12" ? "dash-pill active" : "dash-pill"} onClick={() => setRange("12")}>
-            12 mo
-          </button>
+          <div className="dash-rangeWrap">
+            <select className="dash-rangeSelect" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
+              {rangeOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <button
             className="btn"
@@ -284,7 +358,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KPIs + Next Event */}
       <div className="dash-sub">
         <div className="dash-kpi">
           <div className="dash-kpiLabel">{windowMonths.title}</div>
@@ -379,22 +452,118 @@ export default function Dashboard() {
           })}
         </div>
 
-        {/* Vertical bar chart (normal size) */}
-        <div className="dash-chart" aria-label="Monthly profit bar chart">
-          {monthly.map((m) => {
-            const h = Math.max(3, Math.round((m.total / maxVal) * 100));
-            const exact = money(m.total);
+        {/* ✅ LINE GRAPH (replaces bar chart) */}
+        <div className="dash-lineWrap" aria-label="Monthly profit line chart">
+          <svg
+            className="dash-lineSvg"
+            viewBox={`0 0 ${lineChart.W} ${lineChart.H}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Monthly profit line chart"
+          >
+            <defs>
+              <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(212,175,55,0.22)" />
+                <stop offset="100%" stopColor="rgba(212,175,55,0.00)" />
+              </linearGradient>
 
-            return (
-              <div key={m.key} className="dash-barCol" title={`${m.label}: ${exact}`}>
-                <div className="dash-barTrack">
-                  <div className="dash-barFill" style={{ height: `${h}%` }} />
-                </div>
-                <div className="dash-barLabel">{m.label}</div>
-                <div className="dash-barValue">{exact}</div>
-              </div>
-            );
-          })}
+              <linearGradient id="lineStroke" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="rgba(255,220,120,0.85)" />
+                <stop offset="55%" stopColor="rgba(212,175,55,0.90)" />
+                <stop offset="100%" stopColor="rgba(190,130,255,0.70)" />
+              </linearGradient>
+
+              <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur stdDeviation="3.5" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+
+            {/* grid */}
+            {lineChart.grid.map((g, idx) => (
+              <g key={idx}>
+                <line
+                  x1={lineChart.padL}
+                  x2={lineChart.W - lineChart.padR}
+                  y1={g.y}
+                  y2={g.y}
+                  stroke="rgba(255,255,255,0.07)"
+                  strokeWidth="1"
+                />
+                <text
+                  x={lineChart.padL - 10}
+                  y={g.y + 4}
+                  textAnchor="end"
+                  fontSize="11"
+                  fill="rgba(255,255,255,0.62)"
+                  style={{ userSelect: "none" }}
+                >
+                  {money(g.val)}
+                </text>
+              </g>
+            ))}
+
+            {/* baseline (0) */}
+            <line
+              x1={lineChart.padL}
+              x2={lineChart.W - lineChart.padR}
+              y1={lineChart.baselineY}
+              y2={lineChart.baselineY}
+              stroke="rgba(255,255,255,0.14)"
+              strokeWidth="1"
+            />
+
+            {/* area */}
+            {lineChart.pts.length ? (
+              <path d={lineChart.areaD} fill="url(#areaFill)" opacity={1} />
+            ) : null}
+
+            {/* line */}
+            {lineChart.pts.length ? (
+              <path
+                d={lineChart.d}
+                fill="none"
+                stroke="url(#lineStroke)"
+                strokeWidth="3"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                filter="url(#glow)"
+              />
+            ) : null}
+
+            {/* points */}
+            {lineChart.pts.map((p, idx) => (
+              <g key={idx}>
+                <circle cx={p.x} cy={p.y} r="5.2" fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
+                <circle cx={p.x} cy={p.y} r="3.6" fill="rgba(255,220,120,0.92)" filter="url(#glow)" />
+                {/* tooltip via <title> */}
+                <title>{`${p.label}: ${money(p.v)}`}</title>
+              </g>
+            ))}
+
+            {/* x labels */}
+            {lineChart.pts.map((p, idx) => {
+              if (idx % lineChart.labelStep !== 0 && idx !== lineChart.pts.length - 1) return null;
+              return (
+                <text
+                  key={idx}
+                  x={p.x}
+                  y={lineChart.H - 16}
+                  textAnchor="middle"
+                  fontSize="11"
+                  fill="rgba(255,255,255,0.74)"
+                  style={{ userSelect: "none" }}
+                >
+                  {monthly[idx]?.label ?? ""}
+                </text>
+              );
+            })}
+          </svg>
+
+          <div className="dash-lineHint muted">Hover points (or tap/hold on mobile) to see exact values.</div>
         </div>
       </div>
 
@@ -404,12 +573,7 @@ export default function Dashboard() {
 
         /* =========================================================
            ULTRA INTENSE PURPLE GLOW + PURPLE RAIN (VISUAL ONLY)
-           CHANGE REQUEST:
-           - big purple "balls" should drift UP way slower + be bigger
-           - keep intensity
            ========================================================= */
-
-        /* Massive aura + BIG ORBS (slow dreamy rise) */
         .dash-page::before{
           content:"";
           position:absolute;
@@ -418,7 +582,6 @@ export default function Dashboard() {
           pointer-events:none;
 
           background:
-            /* Deep aura layers */
             radial-gradient(1200px 720px at 20% 0%, rgba(185,120,255,0.42), transparent 62%),
             radial-gradient(1100px 680px at 85% 18%, rgba(120,70,255,0.34), transparent 64%),
             radial-gradient(1200px 760px at 55% 110%, rgba(90,35,220,0.40), transparent 62%),
@@ -426,7 +589,6 @@ export default function Dashboard() {
             radial-gradient(700px 460px at 12% 82%, rgba(0,210,255,0.07), transparent 65%),
             linear-gradient(180deg, rgba(20,8,40,0.35), rgba(0,0,0,0.18)),
 
-            /* BIG DREAM ORBS (BIGGER) */
             radial-gradient(circle,
               rgba(255,255,255,0.18) 0 6px,
               rgba(210,150,255,0.78) 14px,
@@ -453,13 +615,10 @@ export default function Dashboard() {
             100% 100%,
             100% 100%,
             100% 100%,
-
-            /* big orb fields */
             620px 1400px,
             700px 1600px,
             660px 1500px;
 
-          /* Start positions: orbs start lower so they can drift UP */
           background-position:
             50% 50%,
             50% 50%,
@@ -467,7 +626,6 @@ export default function Dashboard() {
             50% 50%,
             50% 50%,
             50% 50%,
-
             12% 140%,
             52% 160%,
             86% 150%;
@@ -477,13 +635,11 @@ export default function Dashboard() {
           mix-blend-mode: screen;
           transform: translateZ(0);
 
-          /* Aura pulse stays, orb rise is separate + VERY slow */
           animation:
             dashAuraPulse 6.2s ease-in-out infinite,
             dashOrbsRise 26s linear infinite;
         }
 
-        /* Dense purple rain (still intense + fast) */
         .dash-page::after{
           content:"";
           position:absolute;
@@ -492,19 +648,16 @@ export default function Dashboard() {
           pointer-events:none;
 
           background:
-            /* MID droplets (tons) */
             radial-gradient(circle, rgba(210,150,255,0.28) 0 1px, transparent 6px),
             radial-gradient(circle, rgba(170,110,255,0.24) 0 1px, transparent 6px),
             radial-gradient(circle, rgba(120,70,255,0.22) 0 1px, transparent 6px),
             radial-gradient(circle, rgba(220,160,255,0.22) 0 1px, transparent 6px),
 
-            /* FINE mist rain (insane density) */
             radial-gradient(circle, rgba(230,190,255,0.18) 0 1px, transparent 4px),
             radial-gradient(circle, rgba(190,130,255,0.16) 0 1px, transparent 4px),
             radial-gradient(circle, rgba(140,90,255,0.14) 0 1px, transparent 4px),
             radial-gradient(circle, rgba(90,35,220,0.12) 0 1px, transparent 4px),
 
-            /* soft streak veil for "rain" feel */
             repeating-linear-gradient(
               165deg,
               rgba(190,130,255,0.10) 0px,
@@ -518,12 +671,10 @@ export default function Dashboard() {
             280px 560px,
             300px 600px,
             320px 640px,
-
             160px 260px,
             170px 280px,
             180px 300px,
             190px 320px,
-
             100% 100%;
 
           background-position:
@@ -531,12 +682,10 @@ export default function Dashboard() {
             52% -110%,
             76% -90%,
             92% -130%,
-
             12% -40%,
             38% -180%,
             64% -120%,
             88% -240%,
-
             0% 0%;
 
           mix-blend-mode: screen;
@@ -558,99 +707,49 @@ export default function Dashboard() {
           70%  { transform: translate3d(-5px,2px,0px) scale(1.02); filter: blur(16px) saturate(1.45); opacity: 0.98; }
           100% { transform: translate3d(0px,0px,0px) scale(1);   filter: blur(14px) saturate(1.15); opacity: 0.92; }
         }
-
-        /* BIG ORBS rise upward VERY SLOW (dreamy) */
         @keyframes dashOrbsRise{
           0%{
             background-position:
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-
-              12% 140%,
-              52% 160%,
-              86% 150%;
+              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
+              12% 140%,52% 160%,86% 150%;
           }
           100%{
             background-position:
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-              50% 50%,
-
-              12% -120%,
-              52% -150%,
-              86% -135%;
+              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
+              12% -120%,52% -150%,86% -135%;
           }
         }
-
         @keyframes dashRainFallFast{
           0%{
             background-position:
-              22% -60%,
-              52% -110%,
-              76% -90%,
-              92% -130%,
-
-              12% -40%,
-              38% -180%,
-              64% -120%,
-              88% -240%,
-
+              22% -60%,52% -110%,76% -90%,92% -130%,
+              12% -40%,38% -180%,64% -120%,88% -240%,
               0% 0%;
           }
           100%{
             background-position:
-              22% 320%,
-              52% 360%,
-              76% 340%,
-              92% 380%,
-
-              12% 520%,
-              38% 580%,
-              64% 560%,
-              88% 620%,
-
+              22% 320%,52% 360%,76% 340%,92% 380%,
+              12% 520%,38% 580%,64% 560%,88% 620%,
               0% 0%;
           }
         }
-
-        @keyframes dashRainFallMed{
-          0%{ transform: translate3d(0px,0px,0px) scale(1); }
-          100%{ transform: translate3d(0px,4px,0px) scale(1.01); }
-        }
-
-        @keyframes dashRainFallSlow{
-          0%,100%{ filter: blur(0.10px) saturate(1.25); }
-          50%{ filter: blur(0.22px) saturate(1.45); }
-        }
-
+        @keyframes dashRainFallMed{ 0%{ transform: translate3d(0,0,0) scale(1); } 100%{ transform: translate3d(0,4px,0) scale(1.01);} }
+        @keyframes dashRainFallSlow{ 0%,100%{ filter: blur(0.10px) saturate(1.25);} 50%{ filter: blur(0.22px) saturate(1.45);} }
         @keyframes dashRainDrift{
-          0%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
-          25%{ transform: translate3d(8px,-1px,0px) skewX(-0.7deg); }
-          50%{ transform: translate3d(-10px,0px,0px) skewX(0.9deg); }
-          75%{ transform: translate3d(7px,1px,0px) skewX(-0.5deg); }
-          100%{ transform: translate3d(0px,0px,0px) skewX(0deg); }
+          0%{ transform: translate3d(0,0,0) skewX(0deg); }
+          25%{ transform: translate3d(8px,-1px,0) skewX(-0.7deg); }
+          50%{ transform: translate3d(-10px,0px,0) skewX(0.9deg); }
+          75%{ transform: translate3d(7px,1px,0) skewX(-0.5deg); }
+          100%{ transform: translate3d(0,0,0) skewX(0deg); }
         }
-
-        @keyframes dashRainFlicker{
-          0%,100%{ opacity: 0.86; }
-          20%{ opacity: 0.98; }
-          45%{ opacity: 0.88; }
-          65%{ opacity: 1; }
-          85%{ opacity: 0.90; }
-        }
+        @keyframes dashRainFlicker{ 0%,100%{ opacity: 0.86;} 20%{ opacity:0.98;} 45%{ opacity:0.88;} 65%{ opacity:1;} 85%{ opacity:0.90;} }
 
         @media (prefers-reduced-motion: reduce){
           .dash-page::before, .dash-page::after{ animation:none; }
         }
 
         .dash-top{ align-items:center; gap:10px; flex-wrap: wrap; }
+        .dash-controls{ display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
 
         .dash-sigil{
           color: rgba(212,175,55,0.92);
@@ -661,18 +760,38 @@ export default function Dashboard() {
             0 0 18px rgba(212,175,55,0.25);
         }
 
-        .dash-controls{ display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
-        .dash-pill{
-          border-radius: 999px; padding: 10px 12px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(255,255,255,0.05);
-          color: rgba(255,255,255,0.88);
-          font-weight: 900; cursor:pointer;
+        /* Dropdown styling: black background + white text */
+        .dash-rangeWrap{ display:flex; align-items:center; position: relative; }
+        .dash-rangeSelect{
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          border-radius: 12px;
+          padding: 10px 36px 10px 12px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(0,0,0,0.88);
+          color: rgba(255,255,255,0.94);
+          font-weight: 950;
+          cursor: pointer;
+          box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+          line-height: 1;
         }
-        .dash-pill.active{
-          border-color: rgba(212,175,55,0.40);
-          background: rgba(212,175,55,0.12);
+        .dash-rangeSelect:focus{
+          outline: none;
+          border-color: rgba(212,175,55,0.38);
+          box-shadow: 0 0 0 4px rgba(212,175,55,0.12);
         }
+        .dash-rangeWrap:after{
+          content:"▾";
+          position:absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: rgba(255,255,255,0.80);
+          pointer-events:none;
+          font-weight: 900;
+        }
+        .dash-rangeSelect option{ background:#000; color:#fff; }
 
         .dash-sub{
           margin-top: 10px;
@@ -739,36 +858,29 @@ export default function Dashboard() {
         .dash-breakProfit{ text-align:right; color: rgba(255,255,255,0.78); white-space: nowrap; }
         .dash-breakPct{ text-align:right; color: rgba(212,175,55,0.78); white-space: nowrap; }
 
-        .dash-chart{
+        /* ✅ LINE CHART WRAP */
+        .dash-lineWrap{
           margin-top: 12px;
-          display:grid;
-          grid-auto-flow: column;
-          grid-auto-columns: minmax(86px, 1fr);
-          gap: 10px;
-          align-items:end;
-          overflow-x:auto;
-          padding-bottom: 6px;
-        }
-        .dash-barCol{ display:flex; flex-direction:column; align-items:center; gap:6px; min-width:86px; }
-        .dash-barTrack{
-          width: 100%;
-          height: 190px;
           border-radius: 14px;
           border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.035);
-          overflow:hidden;
-          display:flex;
-          align-items:flex-end;
-          justify-content:center;
+          background:
+            radial-gradient(260px 160px at 18% 18%, rgba(255,255,255,0.06), transparent 62%),
+            rgba(255,255,255,0.03);
+          padding: 10px;
+          overflow: hidden;
+          box-shadow: 0 18px 50px rgba(0,0,0,0.25);
         }
-        .dash-barFill{
-          width: 56%;
-          border-radius: 12px;
-          background: rgba(212,175,55,0.22);
-          border: 1px solid rgba(212,175,55,0.25);
+        .dash-lineSvg{
+          width: 100%;
+          height: 270px;
+          display: block;
         }
-        .dash-barLabel{ font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.85); text-align:center; line-height:1.1; }
-        .dash-barValue{ font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.62); text-align:center; }
+        .dash-lineHint{
+          margin-top: 8px;
+          font-size: 12px;
+          font-weight: 850;
+          color: rgba(255,255,255,0.62);
+        }
 
         @media (max-width: 760px){
           .dash-sub{ grid-template-columns: 1fr; }
@@ -776,11 +888,7 @@ export default function Dashboard() {
           .dash-breakHead, .dash-breakRow{ grid-template-columns: 1fr auto; }
           .dash-breakPct{ display:none; }
 
-          .dash-chart{ grid-auto-columns: minmax(74px, 1fr); gap: 8px; }
-          .dash-barCol{ min-width:74px; }
-          .dash-barTrack{ height: 160px; }
-          .dash-barFill{ width: 50%; }
-          .dash-barValue{ display:none; }
+          .dash-lineSvg{ height: 240px; }
         }
       `}</style>
     </div>

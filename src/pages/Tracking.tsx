@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { addTracking, getTracking, deleteTracking } from "../lib/store";
 
 export default function Tracking() {
@@ -18,19 +18,25 @@ export default function Tracking() {
   const [cost, setCost] = useState<number>(0);
   const [search, setSearch] = useState("");
 
-  // ✅ NEW (small change): modal for viewing contents
+  // contents modal (kept)
   const [openContents, setOpenContents] = useState(false);
   const [contentsText, setContentsText] = useState("");
+
+  // copy toast (kept)
+  const [toast, setToast] = useState<string>("");
+
+  // ✅ NEW: Card view toggle (defaults to cards on small screens, table on desktop)
+  const [mobileView, setMobileView] = useState<"cards" | "table">(() => {
+    if (typeof window === "undefined") return "table";
+    return window.matchMedia && window.matchMedia("(max-width: 820px)").matches ? "cards" : "table";
+  });
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return entries;
 
     return entries.filter((e) => {
-      return (
-        (e.trackingNumber ?? "").toLowerCase().includes(q) ||
-        (e.contents ?? "").toLowerCase().includes(q)
-      );
+      return (e.trackingNumber ?? "").toLowerCase().includes(q) || (e.contents ?? "").toLowerCase().includes(q);
     });
   }, [entries, search]);
 
@@ -59,6 +65,45 @@ export default function Tracking() {
     setContentsText(text || "");
     setOpenContents(true);
   }
+
+  async function copyToClipboard(text: string) {
+    const value = (text || "").trim();
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "-9999px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setToast("Copied!");
+      window.setTimeout(() => setToast(""), 1200);
+    } catch {
+      setToast("Copy failed");
+      window.setTimeout(() => setToast(""), 1400);
+    }
+  }
+
+  // ESC closes modal (tiny QoL)
+  const escBoundRef = useRef(false);
+  useEffect(() => {
+    if (escBoundRef.current) return;
+    escBoundRef.current = true;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenContents(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <div className="page trackingSun">
@@ -191,6 +236,8 @@ export default function Tracking() {
         /* Inputs: sunshine focus glow (visual only) */
         .trackingSun .input{
           transition: box-shadow .15s ease, border-color .15s ease, filter .15s ease;
+          width: 100%;
+          box-sizing: border-box;
         }
         .trackingSun .input:focus{
           border-color: rgba(255,220,120,0.28) !important;
@@ -232,16 +279,6 @@ export default function Tracking() {
           100% { transform: translateX(70%) skewX(-10deg); opacity: 0.58; }
         }
 
-        /* Row glow for recently added items (best-effort visual):
-           We don't know which is "newest", but we can add a hover glow and a soft ambient glow for all rows. */
-        .trackingSun .table tbody tr{
-          transition: background .15s ease, box-shadow .15s ease, filter .15s ease;
-        }
-        .trackingSun .table tbody tr:hover{
-          background: rgba(255,220,120,0.05);
-          box-shadow: inset 0 0 0 1px rgba(255,220,120,0.10);
-        }
-
         /* Contents button look */
         .contentsBtn{
           border: 1px solid rgba(255,255,255,0.14);
@@ -261,6 +298,163 @@ export default function Tracking() {
           filter: brightness(1.08);
         }
         .contentsBtn:active{ transform: translateY(1px); }
+
+        /* Copy button */
+        .copyBtn{
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.92);
+          border-radius: 10px;
+          padding: 8px 10px;
+          cursor: pointer;
+          font-weight: 900;
+          box-shadow: 0 0 0 2px rgba(255,220,120,0.04), 0 0 18px rgba(255,220,120,0.07);
+          transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease, filter .15s ease;
+          white-space: nowrap;
+        }
+        .copyBtn:hover{
+          border-color: rgba(255,220,120,0.26);
+          box-shadow: 0 0 0 3px rgba(255,220,120,0.08), 0 0 26px rgba(255,220,120,0.10);
+          filter: brightness(1.08);
+        }
+        .copyBtn:active{ transform: translateY(1px); }
+
+        /* Tracking number row (input + copy) */
+        .tnRow{
+          display:flex;
+          gap: 10px;
+          align-items:center;
+        }
+        .tnRow .input{ flex: 1 1 auto; min-width: 0; }
+        @media (max-width: 520px){
+          .tnRow{
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .copyBtn{ width: 100%; }
+        }
+
+        /* ✅ View toggle */
+        .viewToggleRow{
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-top: 10px;
+          margin-bottom: 8px;
+        }
+        .segmented{
+          display:flex;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.04);
+          border-radius: 12px;
+          overflow: hidden;
+        }
+        .segBtn{
+          padding: 8px 10px;
+          font-weight: 950;
+          border: 0;
+          cursor: pointer;
+          background: transparent;
+          color: rgba(255,255,255,0.86);
+        }
+        .segBtn.active{
+          background: rgba(255,220,120,0.12);
+          color: rgba(255,255,255,0.95);
+        }
+
+        /* ✅ TABLE: make table scrollable within card */
+        .tableWrap{
+          width: 100%;
+          overflow-x: auto;
+          overflow-y: hidden;
+          -webkit-overflow-scrolling: touch;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.02);
+        }
+        .tableWrap:focus{ outline: none; }
+
+        .table{
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 720px;
+        }
+        .table th, .table td{
+          padding: 10px 12px;
+          vertical-align: middle;
+        }
+
+        .monoCell{
+          font-family: monospace;
+          white-space: nowrap;
+        }
+
+        @media (max-width: 480px){
+          .table th, .table td{ padding: 9px 10px; }
+        }
+
+        /* ✅ CARD LIST (mobile-friendly) */
+        .cardList{
+          display: grid;
+          gap: 12px;
+          margin-top: 8px;
+        }
+        .entryCard{
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.03);
+          border-radius: 16px;
+          padding: 12px;
+          box-shadow: inset 0 0 0 1px rgba(255,220,120,0.04);
+        }
+        .entryTop{
+          display:flex;
+          align-items:flex-start;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .entryLabel{
+          font-size: 12px;
+          opacity: 0.72;
+          font-weight: 900;
+          letter-spacing: .2px;
+          margin-bottom: 4px;
+        }
+        .entryValue{
+          font-size: 14px;
+          font-weight: 900;
+          color: rgba(255,255,255,0.92);
+          word-break: break-word;
+        }
+        .entryMono{
+          font-family: monospace;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 100%;
+        }
+        .entryGrid{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-top: 10px;
+        }
+        @media (max-width: 420px){
+          .entryGrid{ grid-template-columns: 1fr; }
+        }
+
+        .entryActions{
+          display:flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-top: 12px;
+        }
+        .entryActions .btn,
+        .entryActions .copyBtn,
+        .entryActions .contentsBtn{
+          padding: 8px 10px;
+          border-radius: 12px;
+        }
 
         /* Modal for contents */
         .sunOverlay{
@@ -321,6 +515,25 @@ export default function Tracking() {
           box-shadow: inset 0 0 0 1px rgba(255,220,120,0.06);
         }
 
+        /* Toast */
+        .toast{
+          position: fixed;
+          left: 50%;
+          bottom: 18px;
+          transform: translateX(-50%);
+          z-index: 90;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,220,120,0.18);
+          background: rgba(0,0,0,0.78);
+          backdrop-filter: blur(10px);
+          color: rgba(255,255,255,0.92);
+          font-weight: 900;
+          box-shadow: 0 18px 60px rgba(0,0,0,0.55), 0 0 24px rgba(255,220,120,0.10);
+          pointer-events: none;
+          white-space: nowrap;
+        }
+
         @media (prefers-reduced-motion: reduce){
           .trackingSun:after{ animation:none; }
           .trackTitle .titleSweep{ animation:none; }
@@ -339,7 +552,12 @@ export default function Tracking() {
           <h2>Add Tracking</h2>
 
           <label className="label">Tracking Number</label>
-          <input className="input" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} />
+          <div className="tnRow">
+            <input className="input" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} />
+            <button className="copyBtn" type="button" onClick={() => copyToClipboard(trackingNumber)} title="Copy">
+              Copy
+            </button>
+          </div>
 
           <label className="label">Date Purchased</label>
           <input
@@ -377,55 +595,150 @@ export default function Tracking() {
       <div className="card" style={{ marginTop: 16 }}>
         <h2>All Tracking Entries</h2>
 
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Tracking #</th>
-              <th>Date</th>
-              <th>Contents</th>
-              <th>Cost</th>
-              <th style={{ width: 80 }}>Actions</th>
-            </tr>
-          </thead>
+        {/* ✅ NEW: View toggle */}
+        <div className="viewToggleRow">
+          <span className="muted">View</span>
+          <div className="segmented" role="tablist" aria-label="Tracking view">
+            <button
+              className={`segBtn ${mobileView === "cards" ? "active" : ""}`}
+              type="button"
+              onClick={() => setMobileView("cards")}
+              aria-pressed={mobileView === "cards"}
+            >
+              Cards
+            </button>
+            <button
+              className={`segBtn ${mobileView === "table" ? "active" : ""}`}
+              type="button"
+              onClick={() => setMobileView("table")}
+              aria-pressed={mobileView === "table"}
+            >
+              Table
+            </button>
+          </div>
+        </div>
 
-          <tbody>
+        {mobileView === "table" ? (
+          <>
+            <div className="tableWrap" role="region" aria-label="Tracking entries table" tabIndex={0}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Tracking #</th>
+                    <th>Date</th>
+                    <th>Contents</th>
+                    <th>Cost</th>
+                    <th style={{ width: 80 }}>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map((e) => (
+                    <tr key={e.id}>
+                      <td className="monoCell">
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <span>{e.trackingNumber}</span>
+                          <button
+                            className="copyBtn"
+                            type="button"
+                            onClick={() => copyToClipboard(e.trackingNumber ?? "")}
+                            title="Copy tracking number"
+                            style={{ padding: "6px 8px", borderRadius: 10 }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </td>
+
+                      <td>{e.datePurchasedISO ?? ""}</td>
+
+                      <td className="muted">
+                        {(e.contents ?? "").trim().length ? (
+                          <button className="contentsBtn" type="button" onClick={() => viewContents(e.contents ?? "")}>
+                            View
+                          </button>
+                        ) : (
+                          ""
+                        )}
+                      </td>
+
+                      <td>{e.cost ? `$${e.cost}` : ""}</td>
+                      <td>
+                        <button className="btn danger" onClick={() => handleDelete(e.id)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="muted">
+                        No tracking entries found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="muted" style={{ marginTop: 10 }}>
+              Tip: On mobile, swipe left/right on the table to see all columns.
+            </p>
+          </>
+        ) : (
+          <div className="cardList" aria-label="Tracking entries cards">
             {filtered.map((e) => (
-              <tr key={e.id}>
-                <td style={{ fontFamily: "monospace" }}>{e.trackingNumber}</td>
-                <td>{e.datePurchasedISO ?? ""}</td>
+              <div className="entryCard" key={e.id}>
+                <div className="entryTop">
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="entryLabel">Tracking #</div>
+                    <div className="entryValue entryMono" title={e.trackingNumber ?? ""}>
+                      {e.trackingNumber ?? ""}
+                    </div>
+                  </div>
+                </div>
 
-                {/* ✅ SMALL CHANGE: Contents becomes a button that opens a big modal */}
-                <td className="muted">
+                <div className="entryGrid">
+                  <div>
+                    <div className="entryLabel">Date Purchased</div>
+                    <div className="entryValue">{e.datePurchasedISO ?? ""}</div>
+                  </div>
+                  <div>
+                    <div className="entryLabel">Cost</div>
+                    <div className="entryValue">{e.cost ? `$${e.cost}` : ""}</div>
+                  </div>
+                </div>
+
+                <div className="entryActions">
+                  <button
+                    className="copyBtn"
+                    type="button"
+                    onClick={() => copyToClipboard(e.trackingNumber ?? "")}
+                    title="Copy tracking number"
+                  >
+                    Copy
+                  </button>
+
                   {(e.contents ?? "").trim().length ? (
                     <button className="contentsBtn" type="button" onClick={() => viewContents(e.contents ?? "")}>
-                      View
+                      View Contents
                     </button>
-                  ) : (
-                    ""
-                  )}
-                </td>
+                  ) : null}
 
-                <td>{e.cost ? `$${e.cost}` : ""}</td>
-                <td>
                   <button className="btn danger" onClick={() => handleDelete(e.id)}>
                     Delete
                   </button>
-                </td>
-              </tr>
+                </div>
+              </div>
             ))}
 
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={5} className="muted">
-                  No tracking entries found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            {filtered.length === 0 && <div className="muted">No tracking entries found.</div>}
+          </div>
+        )}
       </div>
 
-      {/* ✅ Contents Modal */}
+      {/* Contents Modal */}
       {openContents && (
         <div className="sunOverlay" onMouseDown={() => setOpenContents(false)}>
           <div className="sunModal" onMouseDown={(e) => e.stopPropagation()}>
@@ -441,6 +754,8 @@ export default function Tracking() {
           </div>
         </div>
       )}
+
+      {!!toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
