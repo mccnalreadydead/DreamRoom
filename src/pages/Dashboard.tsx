@@ -80,10 +80,7 @@ export default function Dashboard() {
         return;
       }
 
-      const linesRes = await supabase
-        .from("sale_lines")
-        .select("sale_id,item_id,units,price,fees")
-        .in("sale_id", saleIds);
+      const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
 
       if (linesRes.error) throw linesRes.error;
       const linesRows = (linesRes.data as any[]) ?? [];
@@ -271,10 +268,12 @@ export default function Dashboard() {
   const lineChart = useMemo(() => {
     const W = 920; // virtual width (viewBox)
     const H = 260; // virtual height (viewBox)
-    const padL = 44;
-    const padR = 16;
+
+    // ✅ readability: give labels more room so they don't clip
+    const padL = 64; // was 44
+    const padR = 22; // was 16
     const padT = 18;
-    const padB = 42;
+    const padB = 58; // was 42
 
     const n = monthly.length;
     const values = monthly.map((m) => (Number.isFinite(m.total) ? m.total : 0));
@@ -450,7 +449,12 @@ export default function Dashboard() {
 
         {/* ✅ LINE GRAPH */}
         <div className="dash-lineWrap" aria-label="Monthly profit line chart">
-          <svg className="dash-lineSvg" viewBox={`0 0 ${lineChart.W} ${lineChart.H}`} preserveAspectRatio="none" role="img">
+          <svg
+            className="dash-lineSvg"
+            viewBox={`0 0 ${lineChart.W} ${lineChart.H}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+          >
             <defs>
               <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgba(212,175,55,0.22)" />
@@ -470,6 +474,11 @@ export default function Dashboard() {
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
+
+              {/* ✅ readability: subtle shadow for axis labels */}
+              <filter id="labelShadow" x="-40%" y="-40%" width="180%" height="180%">
+                <feDropShadow dx="0" dy="1" stdDeviation="1.2" floodColor="rgba(0,0,0,0.75)" />
+              </filter>
             </defs>
 
             {lineChart.grid.map((g, idx) => (
@@ -483,11 +492,12 @@ export default function Dashboard() {
                   strokeWidth="1"
                 />
                 <text
-                  x={lineChart.padL - 10}
-                  y={g.y + 4}
+                  x={lineChart.padL - 12}
+                  y={g.y + 5}
                   textAnchor="end"
-                  fontSize="11"
-                  fill="rgba(255,255,255,0.62)"
+                  fontSize="13"
+                  fill="rgba(255,255,255,0.88)"
+                  filter="url(#labelShadow)"
                   style={{ userSelect: "none" }}
                 >
                   {money(g.val)}
@@ -532,10 +542,11 @@ export default function Dashboard() {
                 <text
                   key={idx}
                   x={p.x}
-                  y={lineChart.H - 16}
+                  y={lineChart.H - 18}
                   textAnchor="middle"
-                  fontSize="11"
-                  fill="rgba(255,255,255,0.74)"
+                  fontSize="13"
+                  fill="rgba(255,255,255,0.90)"
+                  filter="url(#labelShadow)"
                   style={{ userSelect: "none" }}
                 >
                   {monthly[idx]?.label ?? ""}
@@ -780,7 +791,6 @@ export default function Dashboard() {
           display:grid;
           gap: 10px;
         }
-        /* Desktop: 4 across */
         .dash-subCompact{
           grid-template-columns: repeat(4, minmax(0,1fr));
         }
@@ -790,7 +800,6 @@ export default function Dashboard() {
           border: 1px solid rgba(255,255,255,0.10);
           background: rgba(255,255,255,0.05);
         }
-        /* smaller, condensed cards */
         .dash-kpiCompact{
           padding: 10px 10px;
           min-height: 88px;
@@ -829,7 +838,6 @@ export default function Dashboard() {
           gap: 8px;
           flex-wrap: wrap;
         }
-        /* Next event visual pop stays dreamy */
         .dash-nextEvent{
           border-color: rgba(var(--violet), 0.25);
           background:
@@ -892,7 +900,7 @@ export default function Dashboard() {
         }
         .dash-lineSvg{
           width: 100%;
-          height: 270px;
+          height: 290px;
           display: block;
         }
         .dash-lineHint{
@@ -902,7 +910,6 @@ export default function Dashboard() {
           color: rgba(255,255,255,0.62);
         }
 
-        /* ✅ Mobile: 2x2 KPI grid so it fits with ZERO sideways scroll */
         @media (max-width: 760px){
           .dash-subCompact{ grid-template-columns: repeat(2, minmax(0,1fr)); }
 
@@ -913,7 +920,7 @@ export default function Dashboard() {
           .dash-breakHead, .dash-breakRow{ grid-template-columns: 1fr auto; }
           .dash-breakPct{ display:none; }
 
-          .dash-lineSvg{ height: 240px; }
+          .dash-lineSvg{ height: 260px; }
         }
       `}</style>
     </div>
