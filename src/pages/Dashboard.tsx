@@ -81,7 +81,6 @@ export default function Dashboard() {
       }
 
       const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
-
       if (linesRes.error) throw linesRes.error;
       const linesRows = (linesRes.data as any[]) ?? [];
 
@@ -264,19 +263,42 @@ export default function Dashboard() {
     []
   );
 
-  // ✅ Line chart geometry (SVG)
+  // ✅ FIXED chart dataset: ALWAYS last 4 months (independent of timeframe dropdown)
+  const chartMonthly = useMemo(() => {
+    const curStart = startOfMonth(now);
+    const start = addMonths(curStart, -3); // last 4 months including current
+    const count = 4;
+
+    const months: { key: string; label: string; total: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const d = addMonths(start, i);
+      months.push({ key: ymKey(d), label: labelMonth(d), total: 0 });
+    }
+    const map = new Map(months.map((m) => [m.key, m]));
+
+    for (const s of sales) {
+      const d = getDate(s);
+      if (!d) continue;
+      const k = ymKey(startOfMonth(d));
+      const bucket = map.get(k);
+      if (!bucket) continue;
+      bucket.total += getProfit(s);
+    }
+
+    return months;
+  }, [sales, now]);
+
+  // ✅ Line chart geometry (SVG) — based on chartMonthly (last 4 months only)
   const lineChart = useMemo(() => {
     const W = 920; // virtual width (viewBox)
     const H = 260; // virtual height (viewBox)
-
-    // ✅ readability: give labels more room so they don't clip
-    const padL = 64; // was 44
-    const padR = 22; // was 16
+    const padL = 54; // slightly more space so left labels are readable
+    const padR = 20;
     const padT = 18;
-    const padB = 58; // was 42
+    const padB = 56; // slightly more space so bottom labels are readable
 
-    const n = monthly.length;
-    const values = monthly.map((m) => (Number.isFinite(m.total) ? m.total : 0));
+    const n = chartMonthly.length;
+    const values = chartMonthly.map((m) => (Number.isFinite(m.total) ? m.total : 0));
 
     const minVal = Math.min(0, ...values);
     const maxVal2 = Math.max(0, ...values);
@@ -297,7 +319,7 @@ export default function Dashboard() {
       return padT + (1 - t) * plotH;
     };
 
-    const pts = values.map((v, i) => ({ x: xFor(i), y: yFor(v), v, label: monthly[i].label }));
+    const pts = values.map((v, i) => ({ x: xFor(i), y: yFor(v), v, label: chartMonthly[i].label }));
 
     const d = pts
       .map((p, i) => (i === 0 ? `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}` : `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`))
@@ -322,7 +344,7 @@ export default function Dashboard() {
     const labelStep = n <= 6 ? 1 : n <= 12 ? 2 : n <= 24 ? 3 : 4;
 
     return { W, H, padL, padR, padT, padB, pts, d, areaD, baselineY, grid, labelStep };
-  }, [monthly]);
+  }, [chartMonthly]);
 
   return (
     <div className="page dash-page">
@@ -447,14 +469,9 @@ export default function Dashboard() {
           })}
         </div>
 
-        {/* ✅ LINE GRAPH */}
+        {/* ✅ LINE GRAPH (ALWAYS last 4 months) */}
         <div className="dash-lineWrap" aria-label="Monthly profit line chart">
-          <svg
-            className="dash-lineSvg"
-            viewBox={`0 0 ${lineChart.W} ${lineChart.H}`}
-            preserveAspectRatio="xMidYMid meet"
-            role="img"
-          >
+          <svg className="dash-lineSvg" viewBox={`0 0 ${lineChart.W} ${lineChart.H}`} preserveAspectRatio="none" role="img">
             <defs>
               <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgba(212,175,55,0.22)" />
@@ -474,11 +491,6 @@ export default function Dashboard() {
                   <feMergeNode in="SourceGraphic" />
                 </feMerge>
               </filter>
-
-              {/* ✅ readability: subtle shadow for axis labels */}
-              <filter id="labelShadow" x="-40%" y="-40%" width="180%" height="180%">
-                <feDropShadow dx="0" dy="1" stdDeviation="1.2" floodColor="rgba(0,0,0,0.75)" />
-              </filter>
             </defs>
 
             {lineChart.grid.map((g, idx) => (
@@ -493,11 +505,10 @@ export default function Dashboard() {
                 />
                 <text
                   x={lineChart.padL - 12}
-                  y={g.y + 5}
+                  y={g.y + 4}
                   textAnchor="end"
-                  fontSize="13"
+                  fontSize="12"
                   fill="rgba(255,255,255,0.88)"
-                  filter="url(#labelShadow)"
                   style={{ userSelect: "none" }}
                 >
                   {money(g.val)}
@@ -542,14 +553,13 @@ export default function Dashboard() {
                 <text
                   key={idx}
                   x={p.x}
-                  y={lineChart.H - 18}
+                  y={lineChart.H - 20}
                   textAnchor="middle"
-                  fontSize="13"
-                  fill="rgba(255,255,255,0.90)"
-                  filter="url(#labelShadow)"
+                  fontSize="12"
+                  fill="rgba(255,255,255,0.92)"
                   style={{ userSelect: "none" }}
                 >
-                  {monthly[idx]?.label ?? ""}
+                  {chartMonthly[idx]?.label ?? ""}
                 </text>
               );
             })}
@@ -791,6 +801,7 @@ export default function Dashboard() {
           display:grid;
           gap: 10px;
         }
+        /* Desktop: 4 across */
         .dash-subCompact{
           grid-template-columns: repeat(4, minmax(0,1fr));
         }
@@ -800,6 +811,7 @@ export default function Dashboard() {
           border: 1px solid rgba(255,255,255,0.10);
           background: rgba(255,255,255,0.05);
         }
+        /* smaller, condensed cards */
         .dash-kpiCompact{
           padding: 10px 10px;
           min-height: 88px;
@@ -838,6 +850,7 @@ export default function Dashboard() {
           gap: 8px;
           flex-wrap: wrap;
         }
+        /* Next event visual pop stays dreamy */
         .dash-nextEvent{
           border-color: rgba(var(--violet), 0.25);
           background:
@@ -898,9 +911,11 @@ export default function Dashboard() {
           overflow: hidden;
           box-shadow: 0 18px 50px rgba(0,0,0,0.25);
         }
+
+        /* ✅ Slightly bigger graph (only change requested) */
         .dash-lineSvg{
           width: 100%;
-          height: 290px;
+          height: 310px;
           display: block;
         }
         .dash-lineHint{
@@ -910,6 +925,7 @@ export default function Dashboard() {
           color: rgba(255,255,255,0.62);
         }
 
+        /* ✅ Mobile: 2x2 KPI grid so it fits with ZERO sideways scroll */
         @media (max-width: 760px){
           .dash-subCompact{ grid-template-columns: repeat(2, minmax(0,1fr)); }
 
@@ -920,7 +936,7 @@ export default function Dashboard() {
           .dash-breakHead, .dash-breakRow{ grid-template-columns: 1fr auto; }
           .dash-breakPct{ display:none; }
 
-          .dash-lineSvg{ height: 260px; }
+          .dash-lineSvg{ height: 280px; }
         }
       `}</style>
     </div>
