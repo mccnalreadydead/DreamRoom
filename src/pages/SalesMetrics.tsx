@@ -99,6 +99,14 @@ export default function SalesMetrics() {
     return map;
   }, [inventory]);
 
+  const invCostById = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const item of inventory) {
+      map.set(item.id, Math.max(0, toNum(item.cost, 0)));
+    }
+    return map;
+  }, [inventory]);
+
   const dateRange = useMemo(() => {
     const today = new Date();
     
@@ -154,7 +162,7 @@ export default function SalesMetrics() {
   }, [sales, saleLines, dateRange]);
 
   const stats = useMemo(() => {
-    let totalRevenue = 0;
+    let totalProfit = 0;
     let totalFees = 0;
     let saleCount = 0;
     const products = new Set<string>();
@@ -163,8 +171,12 @@ export default function SalesMetrics() {
       if (lines.length > 0) {
         saleCount++;
         for (const line of lines) {
-          totalRevenue += toNum(line.price, 0);
-          totalFees += toNum(line.fees, 0);
+          const units = Math.max(0, toNum(line.units, 0));
+          const price = toNum(line.price, 0);
+          const fees = Math.max(0, toNum(line.fees, 0));
+          const cost = invCostById.get(line.item_id) ?? 0;
+          totalProfit += price - fees - cost * units;
+          totalFees += fees;
           const name = invNameById.get(line.item_id) ?? "Unknown";
           products.add(name);
         }
@@ -172,40 +184,43 @@ export default function SalesMetrics() {
     }
 
     return {
-      totalRevenue,
+      totalProfit,
       totalFees,
       saleCount,
       productCount: products.size,
     };
-  }, [filteredSalesWithLines, invNameById]);
+  }, [filteredSalesWithLines, invNameById, invCostById]);
 
   const groupedItemTotals = useMemo(() => {
-    const byItem = new Map<string, { units: number; revenue: number }>();
+    const byItem = new Map<string, { units: number; profit: number }>();
 
     for (const { lines } of filteredSalesWithLines) {
       for (const line of lines) {
         const itemName = invNameById.get(line.item_id) ?? "Unknown";
         const units = Math.max(0, toNum(line.units, 0));
-        const revenue = Math.max(0, toNum(line.price, 0));
+        const price = toNum(line.price, 0);
+        const fees = Math.max(0, toNum(line.fees, 0));
+        const cost = invCostById.get(line.item_id) ?? 0;
+        const profit = price - fees - cost * units;
 
-        const current = byItem.get(itemName) ?? { units: 0, revenue: 0 };
+        const current = byItem.get(itemName) ?? { units: 0, profit: 0 };
         current.units += units;
-        current.revenue += revenue;
+        current.profit += profit;
         byItem.set(itemName, current);
       }
     }
 
-    const totalRevenue = Array.from(byItem.values()).reduce((sum, item) => sum + item.revenue, 0);
+    const totalProfit = Array.from(byItem.values()).reduce((sum, item) => sum + item.profit, 0);
 
     return Array.from(byItem.entries())
       .map(([itemName, values]) => ({
         itemName,
         units: values.units,
-        revenue: values.revenue,
-        share: totalRevenue > 0 ? (values.revenue / totalRevenue) * 100 : 0,
+        profit: values.profit,
+        share: totalProfit > 0 ? (values.profit / totalProfit) * 100 : 0,
       }))
-      .sort((a, b) => b.units - a.units || b.revenue - a.revenue);
-  }, [filteredSalesWithLines, invNameById]);
+      .sort((a, b) => b.units - a.units || b.profit - a.profit);
+  }, [filteredSalesWithLines, invNameById, invCostById]);
 
   return (
     <div style={{ padding: "20px 16px 32px", color: "rgba(255,255,255,0.95)", fontFamily: "'Segoe UI', sans-serif" }}>
@@ -593,8 +608,8 @@ export default function SalesMetrics() {
 
         <div className="kpiRow">
           <div className="kpiCard">
-            <div className="kpiLabel">💰 Total Revenue</div>
-            <div className="kpiValue">{money(stats.totalRevenue)}</div>
+            <div className="kpiLabel">💰 Total Profit</div>
+            <div className="kpiValue">{money(stats.totalProfit)}</div>
           </div>
           <div className="kpiCard">
             <div className="kpiLabel">📊 Total Sales</div>
@@ -629,11 +644,11 @@ export default function SalesMetrics() {
                   </div>
                   <div className="saleItems">
                     <div className="saleItemRow">
-                      <span className="saleItemName">Revenue</span>
-                      <span className="saleItemValue">{money(item.revenue)}</span>
+                      <span className="saleItemName">Profit</span>
+                      <span className="saleItemValue">{money(item.profit)}</span>
                     </div>
                     <div className="saleItemRow">
-                      <span className="saleItemName">Share of period revenue</span>
+                      <span className="saleItemName">Share of period profit</span>
                       <span className="saleItemValue">{item.share.toFixed(1)}%</span>
                     </div>
                   </div>
@@ -657,7 +672,11 @@ export default function SalesMetrics() {
               {filteredSalesWithLines.map(({ sale, lines }) => {
                 let saleTotal = 0;
                 for (const line of lines) {
-                  saleTotal += toNum(line.price, 0);
+                  const units = Math.max(0, toNum(line.units, 0));
+                  const price = toNum(line.price, 0);
+                  const fees = Math.max(0, toNum(line.fees, 0));
+                  const cost = invCostById.get(line.item_id) ?? 0;
+                  saleTotal += price - fees - cost * units;
                 }
 
                 return (
@@ -675,13 +694,16 @@ export default function SalesMetrics() {
                         const itemName = invNameById.get(line.item_id) ?? "Unknown";
                         const units = toNum(line.units, 0);
                         const price = toNum(line.price, 0);
+                        const fees = Math.max(0, toNum(line.fees, 0));
+                        const cost = invCostById.get(line.item_id) ?? 0;
+                        const lineProfit = price - fees - cost * Math.max(0, units);
 
                         return (
                           <div key={idx} className="saleItemRow">
                             <span className="saleItemName">{itemName}</span>
                             <span className="saleItemValue">
                               {units > 0 ? `${units}x ` : ""}
-                              {money(price)}
+                              {money(lineProfit)}
                             </span>
                           </div>
                         );

@@ -27,21 +27,21 @@ type InventoryRow = {
 type ItemMonthStat = {
   itemName: string;
   units: number;
-  revenue: number;
+  profit: number;
   share: number;
 };
 
 type ItemPeriodStat = {
   itemName: string;
   units: number;
-  revenue: number;
+  profit: number;
   share: number;
 };
 
 type MonthStat = {
   monthKey: string;
   monthLabel: string;
-  totalRevenue: number;
+  totalProfit: number;
   totalUnits: number;
   items: ItemMonthStat[];
 };
@@ -223,7 +223,7 @@ export default function ItemSalesByMonth() {
 
   const monthStats = useMemo<MonthStat[]>(() => {
     const entries = monthRange.map((monthKey: string) => {
-      const monthSales = new Map<string, { units: number; revenue: number }>();
+      const monthSales = new Map<string, { units: number; profit: number }>();
       const selectedSaleIds = new Set<number>();
 
       for (const sale of sales) {
@@ -237,30 +237,33 @@ export default function ItemSalesByMonth() {
         const item = inventoryById.get(Number(line.item_id));
         const itemName = String(item?.name ?? item?.item ?? `Item #${line.item_id}`).trim() || `Item #${line.item_id}`;
         const units = Math.max(0, toNum(line.units, 0));
-        const revenue = Math.max(0, toNum(line.price, 0));
+        const price = toNum(line.price, 0);
+        const fees = Math.max(0, toNum(line.fees, 0));
+        const cost = Math.max(0, toNum(item?.cost, 0));
+        const profit = price - fees - cost * units;
 
-        const current = monthSales.get(itemName) ?? { units: 0, revenue: 0 };
+        const current = monthSales.get(itemName) ?? { units: 0, profit: 0 };
         current.units += units;
-        current.revenue += revenue;
+        current.profit += profit;
         monthSales.set(itemName, current);
       }
 
-      const totalRevenue = Array.from(monthSales.values()).reduce((sum: number, item) => sum + item.revenue, 0);
+      const totalProfit = Array.from(monthSales.values()).reduce((sum: number, item) => sum + item.profit, 0);
       const totalUnits = Array.from(monthSales.values()).reduce((sum: number, item) => sum + item.units, 0);
 
       const items = Array.from(monthSales.entries())
         .map(([itemName, values]) => ({
           itemName,
           units: values.units,
-          revenue: values.revenue,
-          share: totalRevenue > 0 ? (values.revenue / totalRevenue) * 100 : 0,
+          profit: values.profit,
+          share: totalProfit > 0 ? (values.profit / totalProfit) * 100 : 0,
         }))
-        .sort((a: ItemMonthStat, b: ItemMonthStat) => b.revenue - a.revenue || b.units - a.units);
+        .sort((a: ItemMonthStat, b: ItemMonthStat) => b.profit - a.profit || b.units - a.units);
 
       return {
         monthKey,
         monthLabel: monthLabelFromKey(monthKey),
-        totalRevenue,
+        totalProfit,
         totalUnits,
         items,
       };
@@ -276,36 +279,36 @@ export default function ItemSalesByMonth() {
         monthLabel: month.monthLabel,
         itemName: item.itemName,
         units: item.units,
-        revenue: item.revenue,
+        profit: item.profit,
         share: item.share,
       }))
     );
   }, [monthStats]);
 
   const groupedRows = useMemo<ItemPeriodStat[]>(() => {
-    const byItem = new Map<string, { units: number; revenue: number }>();
+    const byItem = new Map<string, { units: number; profit: number }>();
 
     for (const row of allRows) {
-      const current = byItem.get(row.itemName) ?? { units: 0, revenue: 0 };
+      const current = byItem.get(row.itemName) ?? { units: 0, profit: 0 };
       current.units += row.units;
-      current.revenue += row.revenue;
+      current.profit += row.profit;
       byItem.set(row.itemName, current);
     }
 
-    const totalRevenue = allRows.reduce((sum, row) => sum + row.revenue, 0);
+    const totalProfit = allRows.reduce((sum, row) => sum + row.profit, 0);
 
     return Array.from(byItem.entries())
       .map(([itemName, values]) => ({
         itemName,
         units: values.units,
-        revenue: values.revenue,
-        share: totalRevenue > 0 ? (values.revenue / totalRevenue) * 100 : 0,
+        profit: values.profit,
+        share: totalProfit > 0 ? (values.profit / totalProfit) * 100 : 0,
       }))
-      .sort((a, b) => b.units - a.units || b.revenue - a.revenue);
+      .sort((a, b) => b.units - a.units || b.profit - a.profit);
   }, [allRows]);
 
-  const selectedPeriodTotalRevenue = useMemo(
-    () => monthStats.reduce((sum: number, month: MonthStat) => sum + month.totalRevenue, 0),
+  const selectedPeriodTotalProfit = useMemo(
+    () => monthStats.reduce((sum: number, month: MonthStat) => sum + month.totalProfit, 0),
     [monthStats]
   );
 
@@ -317,13 +320,13 @@ export default function ItemSalesByMonth() {
   const topItem = useMemo(() => {
     const ranked = groupedRows
       .slice()
-      .sort((a: { units: number; revenue: number }, b: { units: number; revenue: number }) => b.units - a.units || b.revenue - a.revenue);
+      .sort((a: { units: number; profit: number }, b: { units: number; profit: number }) => b.units - a.units || b.profit - a.profit);
     return ranked[0] ?? null;
   }, [groupedRows]);
 
   const topMonth = useMemo(() => {
     if (!monthStats.length) return null;
-    return monthStats.slice().sort((a: MonthStat, b: MonthStat) => b.totalRevenue - a.totalRevenue)[0];
+    return monthStats.slice().sort((a: MonthStat, b: MonthStat) => b.totalProfit - a.totalProfit)[0];
   }, [monthStats]);
 
   const timeframeLabel = useMemo(() => {
@@ -672,7 +675,7 @@ export default function ItemSalesByMonth() {
 
       <div style={{ marginBottom: 16 }}>
         <h1 className="itemSalesTitle">Item % Sales</h1>
-        <div className="itemSalesSubtitle">Track your product sales mix and revenue percentages month by month</div>
+        <div className="itemSalesSubtitle">Track your product sales mix and profit percentages by timeframe</div>
       </div>
 
       <div className="itemSalesCard" style={{ padding: 20 }}>
@@ -715,7 +718,7 @@ export default function ItemSalesByMonth() {
         {err && <div className="errorBox"><strong style={{ color: "#ffaaaa" }}>Error:</strong> <span>{err}</span></div>}
 
         <div className="kpiGrid">
-          <div className="itemSalesCard kpiBox"><div className="kpiLabel">💰 Total revenue</div><div className="kpiValue">{money(selectedPeriodTotalRevenue)}</div></div>
+          <div className="itemSalesCard kpiBox"><div className="kpiLabel">💰 Total profit</div><div className="kpiValue">{money(selectedPeriodTotalProfit)}</div></div>
           <div className="itemSalesCard kpiBox"><div className="kpiLabel">📦 Units sold</div><div className="kpiValue">{selectedPeriodTotalUnits.toLocaleString()}</div></div>
           <div className="itemSalesCard kpiBox"><div className="kpiLabel">⭐ Top product</div><div className="kpiValue" style={{ fontSize: "clamp(13px, 2.5vw, 18px)" }}>{topItem ? topItem.itemName : "—"}</div></div>
           <div className="itemSalesCard kpiBox"><div className="kpiLabel">📊 Top month</div><div className="kpiValue" style={{ fontSize: "clamp(13px, 2.5vw, 18px)" }}>{topMonth ? topMonth.monthLabel : "—"}</div></div>
@@ -733,8 +736,8 @@ export default function ItemSalesByMonth() {
                     <div className="itemName" title={row.itemName}>{row.itemName}</div>
                     <div className="itemStats">
                       <div className="itemStat"><label>Units sold:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.units}</span></div>
-                      <div className="itemStat"><label>Revenue:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{money(row.revenue)}</span></div>
-                      <div className="itemStat"><label>% of period:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.share.toFixed(1)}%</span></div>
+                      <div className="itemStat"><label>Profit:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{money(row.profit)}</span></div>
+                      <div className="itemStat"><label>% of period profit:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.share.toFixed(1)}%</span></div>
                     </div>
                     <div className="percentBar"><div className="percentFill" style={{ width: `${Math.min(row.share, 100)}%` }} /></div>
                   </div>
