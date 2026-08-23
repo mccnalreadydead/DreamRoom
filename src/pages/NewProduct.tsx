@@ -5,6 +5,7 @@ type Product = {
   name: string;
   wholesale: number;
   resell: number;
+  notes: string;
   createdAt: string;
 };
 
@@ -41,6 +42,7 @@ export default function NewProduct() {
   const [name, setName] = useState("");
   const [wholesale, setWholesale] = useState("");
   const [resell, setResell] = useState("");
+  const [notes, setNotes] = useState("");
 
   useEffect(() => {
     setProducts(loadProducts());
@@ -65,7 +67,7 @@ export default function NewProduct() {
     const r = toNumber(resell);
 
     if (!n) return alert("Enter a product name.");
-    if (w <= 0) return alert("Wholesale price must be greater than 0.");
+    if (w <= 0) return alert("Price Paid must be greater than 0.");
     if (r <= 0) return alert("Resell price must be greater than 0.");
 
     const p: Product = {
@@ -73,6 +75,7 @@ export default function NewProduct() {
       name: n,
       wholesale: w,
       resell: r,
+      notes: notes.trim(),
       createdAt: new Date().toISOString(),
     };
 
@@ -83,6 +86,7 @@ export default function NewProduct() {
     setName("");
     setWholesale("");
     setResell("");
+    setNotes("");
   }
 
   function removeProduct(id: string) {
@@ -95,18 +99,18 @@ export default function NewProduct() {
     <div className="page npM npEarth">
       <style>{`
         /* =========================================================
-           MOBILE-FIRST layout (UNCHANGED)
+           MOBILE-FIRST RESPONSIVE LAYOUT
            ========================================================= */
         .npM-wrap{
           display:grid;
           grid-template-columns: 1fr;
-          gap: 14px;
-          margin-top: 14px;
+          gap: 20px;
+          margin-top: 20px;
           align-items:start;
         }
 
         @media (min-width: 980px){
-          .npM-wrap{ grid-template-columns: 420px 1fr; }
+          .npM-wrap{ grid-template-columns: 380px 1fr; gap: 24px; }
         }
 
         .npM-form .input{
@@ -115,11 +119,24 @@ export default function NewProduct() {
           font-weight: 900;
         }
 
+        .npM-form textarea{
+          border-radius: 12px;
+          font-weight: 500;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.04);
+        }
+
+        .npM-form textarea:focus{
+          border-color: rgba(120,255,180,0.26) !important;
+          box-shadow: 0 0 0 4px rgba(120,255,180,0.12) !important;
+          outline: none;
+        }
+
         .npM-two{
           display:grid;
           grid-template-columns: 1fr;
-          gap: 10px;
-          margin-top: 10px;
+          gap: 12px;
+          margin-top: 14px;
         }
         @media (min-width: 520px){
           .npM-two{ grid-template-columns: 1fr 1fr; }
@@ -128,25 +145,43 @@ export default function NewProduct() {
         .npM-kpis{
           display:grid;
           grid-template-columns: 1fr;
-          gap: 10px;
+          gap: 12px;
         }
         @media (min-width: 620px){
           .npM-kpis{ grid-template-columns: 1fr 1fr 1fr; }
         }
 
-        .npM-tableWrap{
-          overflow-x: auto;
-          -webkit-overflow-scrolling: touch;
-          border-radius: 16px;
+        .npM-delBtn{
+          height: 40px;
+          border-radius: 12px;
+          font-weight: 600;
+          width: 100%;
         }
 
-        .npM-delBtn{
-          height: 38px;
-          border-radius: 14px;
+        /* Product Cards Grid - Mobile Friendly */
+        .npM-productsGrid{
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 16px;
+          margin-top: 16px;
+        }
+
+        @media (min-width: 768px){
+          .npM-productsGrid{
+            grid-template-columns: repeat(2, 1fr);
+            gap: 18px;
+          }
+        }
+
+        @media (min-width: 1200px){
+          .npM-productsGrid{
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+          }
         }
 
         /* =========================================================
-           VISUAL ONLY: "Fresh / Coolest shimmer" title + aura
+           VISUAL: "Fresh / Coolest shimmer" title + aura
            ========================================================= */
         .npEarth{
           position: relative;
@@ -330,79 +365,67 @@ export default function NewProduct() {
           35%{ opacity: 0.90; }
           100%{ transform: translateX(70%) skewX(-10deg); opacity: 0.58; }
         }
-
-        /* Table: subtle glow */
-        .npEarth .table{
-          border-radius: 16px;
-          overflow: hidden;
-        }
-        .npEarth .table thead th{
-          color: rgba(255,255,255,0.72);
-          text-shadow: 0 0 14px rgba(120,255,180,0.08);
-        }
-        .npEarth .table tbody tr{
-          transition: background .15s ease, box-shadow .15s ease;
-        }
-        .npEarth .table tbody tr:hover{
-          background: rgba(120,255,180,0.06);
-          box-shadow: inset 0 0 0 1px rgba(120,255,180,0.10);
-        }
       `}</style>
 
       <div className="row">
         <h1 className="npTitle">
-          Product To Order
+          Resell Products
           <span className="sweep" aria-hidden="true" />
         </h1>
       </div>
 
       <div className="npM-wrap">
-        {/* FORM (TOP ON MOBILE) */}
-        <div className="card npM-form npCardGlow" style={{ padding: 16 }}>
-          <h2 style={{ marginTop: 0 }}>Add Product</h2>
+        {/* FORM (LEFT SIDEBAR ON DESKTOP, TOP ON MOBILE) */}
+        <div className="card npM-form npCardGlow" style={{ padding: 20, height: "fit-content" }}>
+          <h2 style={{ marginTop: 0, marginBottom: 16 }}>Add Product</h2>
 
-          <label className="label">Product name</label>
+          <label className="label" style={{ fontSize: 13, fontWeight: 600 }}>Product name</label>
           <input
             className="input"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="SM7B Replica"
+            style={{ marginBottom: 14 }}
           />
 
-          <div className="npM-two">
-            <div>
-              <label className="label">Wholesale ($)</label>
-              <input
-                className="input"
-                value={wholesale}
-                onChange={(e) => setWholesale(e.target.value)}
-                placeholder="180"
-              />
-            </div>
-            <div>
-              <label className="label">Resell ($)</label>
-              <input
-                className="input"
-                value={resell}
-                onChange={(e) => setResell(e.target.value)}
-                placeholder="260"
-              />
-            </div>
-          </div>
+          <label className="label" style={{ fontSize: 13, fontWeight: 600 }}>Price Paid ($)</label>
+          <input
+            className="input"
+            value={wholesale}
+            onChange={(e) => setWholesale(e.target.value)}
+            placeholder="180"
+            style={{ marginBottom: 14 }}
+          />
 
-          <div style={{ marginTop: 12 }}>
-            <button className="btn primary" onClick={addProduct}>
-              Add Product
-            </button>
-          </div>
+          <label className="label" style={{ fontSize: 13, fontWeight: 600 }}>Resell ($)</label>
+          <input
+            className="input"
+            value={resell}
+            onChange={(e) => setResell(e.target.value)}
+            placeholder="260"
+            style={{ marginBottom: 14 }}
+          />
 
-          <p className="muted" style={{ marginTop: 10, marginBottom: 0 }}>
-            Saved locally for now. Later we’ll sync to Supabase so your phone sees it too.
+          <label className="label" style={{ fontSize: 13, fontWeight: 600 }}>Add Notes</label>
+          <textarea
+            className="input"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g., In good condition, minor scratches on case..."
+            style={{ minHeight: 90, fontFamily: "inherit", padding: 10, resize: "vertical", marginBottom: 14 }}
+          />
+
+          <button className="btn primary" onClick={addProduct} style={{ width: "100%", marginBottom: 12 }}>
+            Add Product
+          </button>
+
+          <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
+            Saved locally for now. Later we'll sync to Supabase so your phone sees it too.
           </p>
         </div>
 
-        {/* STATS + LIST (BELOW FORM ON MOBILE) */}
-        <div className="card npCardGlow" style={{ padding: 14 }}>
+        {/* STATS + PRODUCTS LIST (RIGHT CONTENT ON DESKTOP, BELOW FORM ON MOBILE) */}
+        <div className="card npCardGlow" style={{ padding: 20 }}>
           <div className="npM-kpis">
             <div className="card npCardGlow" style={{ margin: 0 }}>
               <div className="kpiLabel">Products</div>
@@ -415,45 +438,74 @@ export default function NewProduct() {
               </div>
             </div>
             <div className="card npCardGlow" style={{ margin: 0 }}>
-              <div className="kpiLabel">Storage Key</div>
-              <div className="kpiValue" style={{ fontSize: 18 }}>
-                products
+              <div className="kpiLabel">Total Products</div>
+              <div className="kpiValue" style={{ fontSize: 22 }}>
+                {products.length}
               </div>
             </div>
           </div>
 
-          <h2 style={{ marginTop: 14 }}>Product To Order</h2>
+          <h2 style={{ marginTop: 24, marginBottom: 16 }}>Your Resell Products</h2>
 
           {products.length === 0 ? (
-            <p className="muted">No products added yet.</p>
+            <p className="muted" style={{ marginTop: 20, textAlign: "center", padding: "40px 20px", fontSize: 15 }}>
+              No products added yet. Add your first resell product using the form on the left.
+            </p>
           ) : (
-            <div className="npM-tableWrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th style={{ width: 140 }}>Wholesale</th>
-                    <th style={{ width: 140 }}>Resell</th>
-                    <th style={{ width: 140 }}>Margin</th>
-                    <th style={{ width: 110 }}>Delete</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map((p) => (
-                    <tr key={p.id}>
-                      <td>{p.name}</td>
-                      <td>${p.wholesale.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                      <td>${p.resell.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                      <td>${(p.resell - p.wholesale).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                      <td>
-                        <button className="btn npM-delBtn" onClick={() => removeProduct(p.id)}>
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="npM-productsGrid">
+              {products.map((p) => (
+                <div key={p.id} className="card npCardGlow" style={{ padding: 16, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  {/* Product Name */}
+                  <div style={{ marginBottom: 14 }}>
+                    <h3 style={{ margin: 0, fontSize: "clamp(16px, 4vw, 20px)", fontWeight: 700, wordBreak: "break-word", lineHeight: 1.3, color: "rgba(255,255,255,0.95)" }}>
+                      {p.name}
+                    </h3>
+                  </div>
+
+                  {/* Prices */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                    <div style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 10, padding: 10 }}>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>Price Paid</div>
+                      <div style={{ fontSize: "clamp(16px, 3vw, 18px)", fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>
+                        ${p.wholesale.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 10, padding: 10 }}>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>Resell</div>
+                      <div style={{ fontSize: "clamp(16px, 3vw, 18px)", fontWeight: 700, color: "rgba(120,255,180,0.92)" }}>
+                        ${p.resell.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Margin Highlight */}
+                  <div style={{ backgroundColor: "rgba(120,255,180,0.12)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(120,255,180,0.40)" }}>
+                    <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>Your Margin</div>
+                    <div style={{ fontSize: "clamp(18px, 4vw, 22px)", fontWeight: 800, color: "rgba(120,255,180,1)" }}>
+                      ${(p.resell - p.wholesale).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  {p.notes && (
+                    <div style={{ backgroundColor: "rgba(90,200,255,0.10)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(90,200,255,0.35)" }}>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>📝 Notes</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.6, color: "rgba(255,255,255,0.88)", wordBreak: "break-word" }}>
+                        {p.notes}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delete Button */}
+                  <button 
+                    className="btn npM-delBtn" 
+                    onClick={() => removeProduct(p.id)}
+                    style={{ backgroundColor: "rgba(220,80,80,0.15)", color: "rgba(255,100,100,0.92)", marginTop: "auto", border: "1px solid rgba(220,80,80,0.25)" }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>

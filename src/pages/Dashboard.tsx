@@ -2,22 +2,38 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
-type RangeKey = "current" | "1" | "2" | "3" | "4" | "5" | "6" | "12" | "all";
+type RangeKey = "current" | "6" | "12" | "all";
+
+type ProfitRow = {
+  dateISO: string;
+  profit: number;
+};
+
+type NextEvent = {
+  date: string;
+  title: string;
+  bullets: string[];
+  details: string | null;
+};
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
+
 function addMonths(d: Date, delta: number) {
   return new Date(d.getFullYear(), d.getMonth() + delta, 1);
 }
+
 function ymKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
 function labelMonth(d: Date) {
   return `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`;
 }
+
 function todayISO() {
   const d = new Date();
   const y = d.getFullYear();
@@ -31,27 +47,11 @@ function money(n: number) {
   return `$${v.toFixed(2)}`;
 }
 
-type NextEvent = {
-  date: string; // YYYY-MM-DD
-  title: string;
-  bullets: string[];
-  details: string | null;
-};
-
-type ProfitRow = {
-  dateISO: string; // YYYY-MM-DD
-  profit: number;
-};
-
 export default function Dashboard() {
   const [sales, setSales] = useState<ProfitRow[]>([]);
+  const [range, setRange] = useState<RangeKey>("6");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  // ✅ dropdown-driven timeframe
-  const [range, setRange] = useState<RangeKey>("6");
-
-  // Next Event widget state
   const [nextEvent, setNextEvent] = useState<NextEvent | null>(null);
   const [eventErr, setEventErr] = useState("");
   const [eventLoading, setEventLoading] = useState(false);
@@ -80,10 +80,13 @@ export default function Dashboard() {
         return;
       }
 
-      const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
+      const linesRes = await supabase
+        .from("sale_lines")
+        .select("sale_id,item_id,units,price,fees")
+        .in("sale_id", saleIds);
       if (linesRes.error) throw linesRes.error;
-      const linesRows = (linesRes.data as any[]) ?? [];
 
+      const linesRows = (linesRes.data as any[]) ?? [];
       const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean)));
 
       const costMap = new Map<number, number>();
@@ -97,28 +100,28 @@ export default function Dashboard() {
       }
 
       const linesBySale = new Map<number, any[]>();
-      for (const l of linesRows) {
-        const sid = Number(l.sale_id);
+      for (const line of linesRows) {
+        const sid = Number(line.sale_id);
         if (!linesBySale.has(sid)) linesBySale.set(sid, []);
-        linesBySale.get(sid)!.push(l);
+        linesBySale.get(sid)!.push(line);
       }
 
-      const computed: ProfitRow[] = salesRows.map((s) => {
-        const sid = Number(s.id);
+      const computed: ProfitRow[] = salesRows.map((sale) => {
+        const sid = Number(sale.id);
         const saleLines = linesBySale.get(sid) ?? [];
 
-        const profit = saleLines.reduce((sum, l) => {
-          const cost = costMap.get(Number(l.item_id)) ?? 0;
-          const u = Number(l.units ?? 0);
-          const price = Number(l.price ?? 0);
-          const fees = Number(l.fees ?? 0);
-          return sum + (price - fees - cost * u);
+        const profit = saleLines.reduce((sum, line) => {
+          const cost = costMap.get(Number(line.item_id)) ?? 0;
+          const units = Number(line.units ?? 0);
+          const price = Number(line.price ?? 0);
+          const fees = Number(line.fees ?? 0);
+          return sum + (price - fees - cost * units);
         }, 0);
 
-        const dateISO = (String(s.sale_date ?? "").slice(0, 10) || "") || (String(s.created_at ?? "").slice(0, 10) || "");
+        const dateISO = String(sale.sale_date ?? "").slice(0, 10) || String(sale.created_at ?? "").slice(0, 10) || "1970-01-01";
 
         return {
-          dateISO: dateISO || "1970-01-01",
+          dateISO,
           profit,
         };
       });
@@ -160,11 +163,9 @@ export default function Dashboard() {
     const bullets: string[] = Array.isArray(row.bullets) ? row.bullets.filter(Boolean).map(String) : [];
     const details: string | null = row.details != null ? String(row.details) : null;
 
-    const title = bullets[0] || (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event");
-
     setNextEvent({
       date: String(row.note_date),
-      title,
+      title: bullets[0] || (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event"),
       bullets,
       details,
     });
@@ -178,765 +179,601 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function getDate(s: ProfitRow): Date | null {
+  const getDate = (s: ProfitRow) => {
     const raw = s?.dateISO ?? null;
     if (!raw) return null;
     const d = new Date(raw);
     return Number.isFinite(d.getTime()) ? d : null;
-  }
+  };
 
-  function getProfit(s: ProfitRow): number {
-    const n = Number(s?.profit ?? 0);
-    return Number.isFinite(n) ? n : 0;
-  }
+  const getProfit = (s: ProfitRow) => Number.isFinite(Number(s?.profit ?? 0)) ? Number(s.profit ?? 0) : 0;
 
-  const earliestMonth = useMemo(() => {
-    let min: Date | null = null;
-    for (const s of sales) {
-      const d = getDate(s);
-      if (!d) continue;
-      const m = startOfMonth(d);
-      if (!min || m.getTime() < min.getTime()) min = m;
-    }
-    return min;
-  }, [sales]);
-
-  const windowMonths = useMemo(() => {
+  const monthWindow = useMemo(() => {
     const curStart = startOfMonth(now);
-
     if (range === "current") return { start: curStart, count: 1, title: "Current Month" };
-
-    // Rolling windows INCLUDING current month
-    if (range === "1") return { start: addMonths(curStart, -1), count: 2, title: "Last 1 Month" };
-    if (range === "2") return { start: addMonths(curStart, -1), count: 2, title: "Last 2 Months" };
-    if (range === "3") return { start: addMonths(curStart, -2), count: 3, title: "Last 3 Months" };
-    if (range === "4") return { start: addMonths(curStart, -3), count: 4, title: "Last 4 Months" };
-    if (range === "5") return { start: addMonths(curStart, -4), count: 5, title: "Last 5 Months" };
     if (range === "6") return { start: addMonths(curStart, -5), count: 6, title: "Last 6 Months" };
-    if (range === "12") return { start: addMonths(curStart, -11), count: 12, title: "Last 1 Year" };
+    if (range === "12") return { start: addMonths(curStart, -11), count: 12, title: "Last 12 Months" };
 
-    const start = earliestMonth ?? curStart;
+    const earliest = sales.reduce<Date | null>((min, s) => {
+      const d = getDate(s);
+      if (!d) return min;
+      const month = startOfMonth(d);
+      if (!min || month.getTime() < min.getTime()) return month;
+      return min;
+    }, null);
+
+    const start = earliest ?? curStart;
     const diff = (curStart.getFullYear() - start.getFullYear()) * 12 + (curStart.getMonth() - start.getMonth());
     const count = Math.max(1, diff + 1);
     return { start, count, title: "All Time" };
-  }, [range, now, earliestMonth]);
+  }, [sales, range, now]);
 
   const monthly = useMemo(() => {
-    const { start, count } = windowMonths;
-
+    const { start, count } = monthWindow;
     const months: { key: string; label: string; total: number }[] = [];
+
     for (let i = 0; i < count; i++) {
       const d = addMonths(start, i);
       months.push({ key: ymKey(d), label: labelMonth(d), total: 0 });
     }
+
     const map = new Map(months.map((m) => [m.key, m]));
 
     for (const s of sales) {
       const d = getDate(s);
       if (!d) continue;
-      const k = ymKey(startOfMonth(d));
-      const bucket = map.get(k);
-      if (!bucket) continue;
-      bucket.total += getProfit(s);
+      const key = ymKey(startOfMonth(d));
+      if (map.has(key)) map.get(key)!.total += getProfit(s);
     }
 
     return months;
-  }, [sales, windowMonths]);
+  }, [sales, monthWindow]);
 
-  const totalProfit = useMemo(() => monthly.reduce((a, m) => a + m.total, 0), [monthly]);
+  const currentMonthProfit = useMemo(() => {
+    const key = ymKey(startOfMonth(now));
+    return monthly.find((m) => m.key === key)?.total ?? 0;
+  }, [monthly, now]);
 
-  // For breakdown % calculation
-  const maxVal = useMemo(() => Math.max(1, ...monthly.map((m) => m.total)), [monthly]);
+  const last6Total = useMemo(() => monthly.reduce((sum, item) => sum + item.total, 0), [monthly]);
 
-  const rangeOptions: { key: RangeKey; label: string }[] = useMemo(
-    () => [
-      { key: "current", label: "Current revenue" },
-      { key: "1", label: "1 month revenue" },
-      { key: "2", label: "2 months revenue" },
-      { key: "3", label: "3 months revenue" },
-      { key: "4", label: "4 months revenue" },
-      { key: "5", label: "5 months revenue" },
-      { key: "6", label: "6 months revenue" },
-      { key: "12", label: "1 year revenue" },
-      { key: "all", label: "All time revenue" },
-    ],
-    []
-  );
-
-  // ✅ FIXED chart dataset: ALWAYS last 4 months (independent of timeframe dropdown)
   const chartMonthly = useMemo(() => {
     const curStart = startOfMonth(now);
-    const start = addMonths(curStart, -3); // last 4 months including current
-    const count = 4;
-
+    const start = addMonths(curStart, -5);
     const months: { key: string; label: string; total: number }[] = [];
-    for (let i = 0; i < count; i++) {
+
+    for (let i = 0; i < 6; i++) {
       const d = addMonths(start, i);
       months.push({ key: ymKey(d), label: labelMonth(d), total: 0 });
     }
-    const map = new Map(months.map((m) => [m.key, m]));
 
+    const map = new Map(months.map((m) => [m.key, m]));
     for (const s of sales) {
       const d = getDate(s);
       if (!d) continue;
-      const k = ymKey(startOfMonth(d));
-      const bucket = map.get(k);
-      if (!bucket) continue;
-      bucket.total += getProfit(s);
+      const key = ymKey(startOfMonth(d));
+      if (map.has(key)) map.get(key)!.total += getProfit(s);
     }
 
     return months;
   }, [sales, now]);
 
-  // ✅ Line chart geometry (SVG) — based on chartMonthly (last 4 months only)
-  const lineChart = useMemo(() => {
-    const W = 920; // virtual width (viewBox)
-    const H = 260; // virtual height (viewBox)
-    const padL = 54; // slightly more space so left labels are readable
-    const padR = 20;
-    const padT = 18;
-    const padB = 56; // slightly more space so bottom labels are readable
+  const maxBar = Math.max(1, ...chartMonthly.map((m) => m.total));
 
-    const n = chartMonthly.length;
-    const values = chartMonthly.map((m) => (Number.isFinite(m.total) ? m.total : 0));
-
-    const minVal = Math.min(0, ...values);
-    const maxVal2 = Math.max(0, ...values);
-
-    const range = Math.max(1, maxVal2 - minVal);
-    const minYVal = minVal - range * 0.08;
-    const maxYVal = maxVal2 + range * 0.12;
-
-    const plotW = Math.max(1, W - padL - padR);
-    const plotH = Math.max(1, H - padT - padB);
-
-    const xFor = (i: number) => {
-      if (n <= 1) return padL + plotW / 2;
-      return padL + (i / (n - 1)) * plotW;
-    };
-    const yFor = (v: number) => {
-      const t = (v - minYVal) / (maxYVal - minYVal || 1);
-      return padT + (1 - t) * plotH;
-    };
-
-    const pts = values.map((v, i) => ({ x: xFor(i), y: yFor(v), v, label: chartMonthly[i].label }));
-
-    const d = pts
-      .map((p, i) => (i === 0 ? `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}` : `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`))
-      .join(" ");
-
-    const baselineY = yFor(0);
-    const areaD =
-      pts.length >= 2
-        ? `${d} L ${pts[pts.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)} L ${pts[0].x.toFixed(2)} ${baselineY.toFixed(
-            2
-          )} Z`
-        : `M ${pts[0]?.x.toFixed(2) ?? padL} ${baselineY.toFixed(2)} Z`;
-
-    const gridCount = 4;
-    const grid = Array.from({ length: gridCount + 1 }).map((_, i) => {
-      const t = i / gridCount;
-      const y = padT + t * plotH;
-      const val = maxYVal - t * (maxYVal - minYVal);
-      return { y, val };
-    });
-
-    const labelStep = n <= 6 ? 1 : n <= 12 ? 2 : n <= 24 ? 3 : 4;
-
-    return { W, H, padL, padR, padT, padB, pts, d, areaD, baselineY, grid, labelStep };
-  }, [chartMonthly]);
+  const RavenLogo = () => (
+    <svg viewBox="0 0 120 100" width="72" height="58" aria-label="Raven logo" role="img">
+      <g>
+        <circle cx="60" cy="28" r="15" fill="#0f0f10" />
+        <path d="M 72 24 L 92 22 L 77 31 Z" fill="#1b1b1d" />
+        <circle cx="66" cy="24" r="4" fill="#ff5555" />
+        <circle cx="67" cy="23" r="1.5" fill="#ffd166" />
+        <ellipse cx="60" cy="50" rx="16" ry="20" fill="#0f0f10" />
+        <path d="M 47 34 Q 26 26 12 39 Q 24 46 38 42 Q 42 40 47 34" fill="#0f0f10" />
+        <path d="M 73 34 Q 95 26 108 39 Q 96 46 82 42 Q 78 40 73 34" fill="#0f0f10" />
+        <path d="M 46 67 Q 38 82 34 96 Q 43 84 48 69 Z" fill="#0f0f10" />
+        <path d="M 60 69 Q 60 88 60 96 Q 67 84 68 70 Z" fill="#0f0f10" />
+        <path d="M 74 67 Q 82 82 86 96 Q 77 84 72 69 Z" fill="#0f0f10" />
+      </g>
+    </svg>
+  );
 
   return (
-    <div className="page dash-page">
-      <div className="row dash-top">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <h1 style={{ margin: 0 }}>☁️ Into The Dream ☁️</h1>
-          <span className="dash-sigil">⟡</span>
+    <div className="dash-page page">
+      <div className="dash-top">
+        <div className="dash-brandWrap">
+          <RavenLogo />
+          <div>
+            <h1>Dream Room</h1>
+          </div>
         </div>
 
-        <div className="dash-controls">
-          <div className="dash-rangeWrap">
-            <select className="dash-rangeSelect" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
-              {rangeOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="dash-tools">
+          <select className="dash-select" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
+            <option value="current">Current month</option>
+            <option value="6">Last 6 months</option>
+            <option value="12">Last 12 months</option>
+            <option value="all">All time</option>
+          </select>
 
-          <button
-            className="btn"
-            onClick={() => {
-              loadSales();
-              loadNextEvent();
-            }}
-            disabled={loading || eventLoading}
-          >
-            {loading || eventLoading ? "Loading…" : "Refresh"}
+          <button className="btn" onClick={() => loadSales()} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
 
-      {/* ✅ condensed KPI row (no horizontal scroll) */}
-      <div className="dash-sub dash-subCompact">
-        <div className="dash-kpi dash-kpiCompact">
-          <div className="dash-kpiLabel">{windowMonths.title}</div>
-          <div className="dash-kpiValue">{money(totalProfit)}</div>
+      <div className="dash-summaryGrid">
+        <div className="dash-statCard">
+          <span>Current month</span>
+          <strong>{money(currentMonthProfit)}</strong>
+        </div>
+        <div className="dash-statCard">
+          <span>Last 6 months</span>
+          <strong>{money(last6Total)}</strong>
+        </div>
+      </div>
+
+      <div className="dash-kpiGrid">
+        <div className="dash-kpi">
+          <div className="dash-kpiLabel">Window</div>
+          <div className="dash-kpiValue">{monthWindow.title}</div>
         </div>
 
-        <div className="dash-kpi dash-kpiCompact">
-          <div className="dash-kpiLabel">Avg / month</div>
-          <div className="dash-kpiValue">{money(totalProfit / Math.max(1, monthly.length))}</div>
+        <div className="dash-kpi">
+          <div className="dash-kpiLabel">Total</div>
+          <div className="dash-kpiValue">{money(monthly.reduce((sum, item) => sum + item.total, 0))}</div>
         </div>
 
-        <div className="dash-kpi dash-kpiCompact">
+        <div className="dash-kpi">
           <div className="dash-kpiLabel">Best month</div>
-          <div className="dash-kpiValue">
-            {(() => {
-              const best = [...monthly].sort((a, b) => b.total - a.total)[0];
-              return best ? best.label : "—";
-            })()}
-          </div>
+          <div className="dash-kpiValue">{(() => {
+            const best = [...monthly].sort((a, b) => b.total - a.total)[0];
+            return best ? best.label : "—";
+          })()}</div>
         </div>
 
-        <div className="dash-kpi dash-kpiCompact dash-nextEvent">
-          <div className="dash-kpiLabel">Next Event</div>
-
+        <div className="dash-kpi dash-nextEvent">
+          <div className="dash-kpiLabel">Next event</div>
           {eventErr ? (
-            <div className="dash-nextSmall" style={{ color: "salmon" }}>
-              {eventErr}
-            </div>
+            <div className="dash-nextText" style={{ color: "salmon" }}>{eventErr}</div>
           ) : nextEvent ? (
             <>
-              <div className="dash-kpiValue dash-eventTitle">{nextEvent.title}</div>
-              <div className="dash-nextSmall">
-                <b>{nextEvent.date}</b>
-                {nextEvent.bullets?.length ? ` • ${nextEvent.bullets.length} bullet(s)` : ""}
-              </div>
-              <div className="dash-eventBtns">
-                <Link to="/calendar" className="btn primary" style={{ textDecoration: "none" }}>
-                  Calendar
-                </Link>
-                <button className="btn" type="button" onClick={loadNextEvent} disabled={eventLoading}>
-                  {eventLoading ? "…" : "↻"}
-                </button>
+              <div className="dash-kpiValue smallValue">{nextEvent.title}</div>
+              <div className="dash-nextText">{nextEvent.date}</div>
+              <div className="dash-eventActions">
+                <Link to="/calendar" className="btn primary">Calendar</Link>
+                <button className="btn" type="button" onClick={loadNextEvent} disabled={eventLoading}>{eventLoading ? "…" : "↻"}</button>
               </div>
             </>
           ) : (
             <>
-              <div className="dash-kpiValue dash-eventTitle">No upcoming events</div>
-              <div className="dash-nextSmall">Add one in your Event Calendar ✨</div>
-              <div className="dash-eventBtns">
-                <Link to="/calendar" className="btn primary" style={{ textDecoration: "none" }}>
-                  Add
-                </Link>
+              <div className="dash-kpiValue smallValue">No upcoming events</div>
+              <div className="dash-nextText">Add one in your calendar</div>
+              <div className="dash-eventActions">
+                <Link to="/calendar" className="btn primary">Add</Link>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {err ? (
-        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
-          <b style={{ color: "salmon" }}>Error:</b> {err}
-        </div>
-      ) : null}
+      {err ? <div className="dash-error">{err}</div> : null}
 
-      <div className="card dash-card">
-        <div className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0, fontSize: 16 }}>Monthly Profit</h2>
-          <span className="dash-hint">{windowMonths.title}</span>
+      <div className="dash-card">
+        <div className="dash-cardHeader">
+          <h2>Revenue</h2>
+          <span>{monthWindow.title}</span>
         </div>
 
-        {/* Monthly breakdown ABOVE the graph */}
-        <div className="dash-breakdown">
-          <div className="dash-breakHead">
-            <div>Month</div>
-            <div style={{ textAlign: "right" }}>Profit</div>
-            <div style={{ textAlign: "right" }}>% of best</div>
-          </div>
-
-          {monthly.map((m) => {
-            const pct = Math.max(0, Math.min(100, (m.total / maxVal) * 100));
+        <div className="dash-table">
+          {monthly.map((item) => {
+            const pct = Math.max(0, Math.min(100, (item.total / maxBar) * 100));
             return (
-              <div key={m.key} className="dash-breakRow">
-                <div className="dash-breakMonth">{m.label}</div>
-                <div className="dash-breakProfit">{money(m.total)}</div>
-                <div className="dash-breakPct">{pct.toFixed(0)}%</div>
+              <div key={item.key} className="dash-row">
+                <span>{item.label}</span>
+                <strong>{money(item.total)}</strong>
+                <em>{pct.toFixed(0)}%</em>
               </div>
             );
           })}
         </div>
 
-        {/* ✅ LINE GRAPH (ALWAYS last 4 months) */}
-        <div className="dash-lineWrap" aria-label="Monthly profit line chart">
-          <svg className="dash-lineSvg" viewBox={`0 0 ${lineChart.W} ${lineChart.H}`} preserveAspectRatio="none" role="img">
-            <defs>
-              <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="rgba(212,175,55,0.22)" />
-                <stop offset="100%" stopColor="rgba(212,175,55,0.00)" />
-              </linearGradient>
-
-              <linearGradient id="lineStroke" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="rgba(255,220,120,0.85)" />
-                <stop offset="55%" stopColor="rgba(212,175,55,0.90)" />
-                <stop offset="100%" stopColor="rgba(190,130,255,0.70)" />
-              </linearGradient>
-
-              <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-                <feGaussianBlur stdDeviation="3.5" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-
-            {lineChart.grid.map((g, idx) => (
-              <g key={idx}>
-                <line
-                  x1={lineChart.padL}
-                  x2={lineChart.W - lineChart.padR}
-                  y1={g.y}
-                  y2={g.y}
-                  stroke="rgba(255,255,255,0.07)"
-                  strokeWidth="1"
-                />
-                <text
-                  x={lineChart.padL - 12}
-                  y={g.y + 4}
-                  textAnchor="end"
-                  fontSize="12"
-                  fill="rgba(255,255,255,0.88)"
-                  style={{ userSelect: "none" }}
-                >
-                  {money(g.val)}
-                </text>
-              </g>
-            ))}
-
-            <line
-              x1={lineChart.padL}
-              x2={lineChart.W - lineChart.padR}
-              y1={lineChart.baselineY}
-              y2={lineChart.baselineY}
-              stroke="rgba(255,255,255,0.14)"
-              strokeWidth="1"
-            />
-
-            {lineChart.pts.length ? <path d={lineChart.areaD} fill="url(#areaFill)" /> : null}
-
-            {lineChart.pts.length ? (
-              <path
-                d={lineChart.d}
-                fill="none"
-                stroke="url(#lineStroke)"
-                strokeWidth="3"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                filter="url(#glow)"
-              />
-            ) : null}
-
-            {lineChart.pts.map((p, idx) => (
-              <g key={idx}>
-                <circle cx={p.x} cy={p.y} r="5.2" fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-                <circle cx={p.x} cy={p.y} r="3.6" fill="rgba(255,220,120,0.92)" filter="url(#glow)" />
-                <title>{`${p.label}: ${money(p.v)}`}</title>
-              </g>
-            ))}
-
-            {lineChart.pts.map((p, idx) => {
-              if (idx % lineChart.labelStep !== 0 && idx !== lineChart.pts.length - 1) return null;
+        <div className="dash-chartWrap">
+          <div className="dash-chart">
+            {chartMonthly.map((item, idx) => {
+              const height = Math.max((item.total / maxBar) * 100, 6);
               return (
-                <text
-                  key={idx}
-                  x={p.x}
-                  y={lineChart.H - 20}
-                  textAnchor="middle"
-                  fontSize="12"
-                  fill="rgba(255,255,255,0.92)"
-                  style={{ userSelect: "none" }}
-                >
-                  {chartMonthly[idx]?.label ?? ""}
-                </text>
+                <div key={idx} className="dash-barItem">
+                  <div className="dash-barValue">{money(item.total)}</div>
+                  <div className="dash-barTrack">
+                    <div className="dash-bar" style={{ height: `${height}%` }} title={`${item.label}: ${money(item.total)}`} />
+                  </div>
+                  <div className="dash-barLabel">{item.label}</div>
+                </div>
               );
             })}
-          </svg>
-
-          <div className="dash-lineHint muted">Tap/hold a point to see the exact value.</div>
+          </div>
         </div>
       </div>
 
       <style>{`
-        .dash-page{ position: relative; isolation: isolate; }
-        .dash-page > *{ position: relative; z-index: 1; }
+        :root {
+          --red-1: #ff5555;
+          --red-2: #cc3333;
+          --red-3: #ff7a7a;
+          --black-1: #08090b;
+          --black-2: #111214;
+          --black-3: #19191d;
+          --amber: #ffb347;
+          --text: rgba(255,255,255,0.96);
+          --muted: rgba(255,255,255,0.72);
+          --line: rgba(255, 85, 85, 0.18);
+        }
 
-        /* =========================================================
-           PURPLE DREAMY / FLOATY BACKGROUND (restored)
-           ========================================================= */
-        .dash-page::before{
-          content:"";
-          position:absolute;
-          inset:-40px;
-          z-index:0;
-          pointer-events:none;
+        * { box-sizing: border-box; }
 
+        body {
+          background: #090a0d;
+        }
+
+        .dash-page {
+          min-height: 100vh;
+          padding: 16px;
           background:
-            radial-gradient(1200px 720px at 20% 0%, rgba(185,120,255,0.42), transparent 62%),
-            radial-gradient(1100px 680px at 85% 18%, rgba(120,70,255,0.34), transparent 64%),
-            radial-gradient(1200px 760px at 55% 110%, rgba(90,35,220,0.40), transparent 62%),
-            radial-gradient(900px 520px at 50% 40%, rgba(220,160,255,0.16), transparent 60%),
-            radial-gradient(700px 460px at 12% 82%, rgba(0,210,255,0.07), transparent 65%),
-            linear-gradient(180deg, rgba(20,8,40,0.35), rgba(0,0,0,0.18)),
-
-            radial-gradient(circle,
-              rgba(255,255,255,0.18) 0 6px,
-              rgba(210,150,255,0.78) 14px,
-              rgba(140,90,255,0.40) 38px,
-              rgba(90,35,220,0.22) 70px,
-              transparent 115px),
-            radial-gradient(circle,
-              rgba(255,255,255,0.16) 0 6px,
-              rgba(190,120,255,0.74) 14px,
-              rgba(120,70,255,0.38) 36px,
-              rgba(90,35,220,0.20) 68px,
-              transparent 112px),
-            radial-gradient(circle,
-              rgba(255,255,255,0.16) 0 6px,
-              rgba(220,160,255,0.70) 14px,
-              rgba(150,100,255,0.36) 36px,
-              rgba(95,45,230,0.20) 68px,
-              transparent 112px);
-
-          background-size:
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            100% 100%,
-            620px 1400px,
-            700px 1600px,
-            660px 1500px;
-
-          background-position:
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            50% 50%,
-            12% 140%,
-            52% 160%,
-            86% 150%;
-
-          filter: blur(14px) saturate(1.25);
-          opacity: 1;
-          mix-blend-mode: screen;
-          transform: translateZ(0);
-
-          animation:
-            dashAuraPulse 6.2s ease-in-out infinite,
-            dashOrbsRise 26s linear infinite;
+            radial-gradient(circle at top left, rgba(255,85,85,0.18), transparent 26%),
+            radial-gradient(circle at top right, rgba(255,180,71,0.08), transparent 24%),
+            linear-gradient(180deg, #08090b 0%, #120d12 100%);
+          color: var(--text);
         }
 
-        .dash-page::after{
-          content:"";
-          position:absolute;
-          inset:-44px;
-          z-index:0;
-          pointer-events:none;
-
-          background:
-            radial-gradient(circle, rgba(210,150,255,0.28) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(170,110,255,0.24) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(120,70,255,0.22) 0 1px, transparent 6px),
-            radial-gradient(circle, rgba(220,160,255,0.22) 0 1px, transparent 6px),
-
-            radial-gradient(circle, rgba(230,190,255,0.18) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(190,130,255,0.16) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(140,90,255,0.14) 0 1px, transparent 4px),
-            radial-gradient(circle, rgba(90,35,220,0.12) 0 1px, transparent 4px),
-
-            repeating-linear-gradient(
-              165deg,
-              rgba(190,130,255,0.10) 0px,
-              rgba(190,130,255,0.10) 1px,
-              transparent 1px,
-              transparent 14px
-            );
-
-          background-size:
-            260px 520px,
-            280px 560px,
-            300px 600px,
-            320px 640px,
-            160px 260px,
-            170px 280px,
-            180px 300px,
-            190px 320px,
-            100% 100%;
-
-          background-position:
-            22% -60%,
-            52% -110%,
-            76% -90%,
-            92% -130%,
-            12% -40%,
-            38% -180%,
-            64% -120%,
-            88% -240%,
-            0% 0%;
-
-          mix-blend-mode: screen;
-          opacity: 0.92;
-          filter: blur(0.10px) saturate(1.25);
-          transform: translateZ(0);
-
-          animation:
-            dashRainFallFast 0.95s linear infinite,
-            dashRainFallMed 1.35s linear infinite,
-            dashRainFallSlow 2.30s linear infinite,
-            dashRainDrift 1.10s ease-in-out infinite,
-            dashRainFlicker 0.70s ease-in-out infinite;
-        }
-
-        @keyframes dashAuraPulse{
-          0%   { transform: translate3d(0px,0px,0px) scale(1);   filter: blur(14px) saturate(1.15); opacity: 0.92; }
-          35%  { transform: translate3d(6px,-3px,0px) scale(1.03); filter: blur(15px) saturate(1.35); opacity: 1; }
-          70%  { transform: translate3d(-5px,2px,0px) scale(1.02); filter: blur(16px) saturate(1.45); opacity: 0.98; }
-          100% { transform: translate3d(0px,0px,0px) scale(1);   filter: blur(14px) saturate(1.15); opacity: 0.92; }
-        }
-        @keyframes dashOrbsRise{
-          0%{
-            background-position:
-              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
-              12% 140%,52% 160%,86% 150%;
-          }
-          100%{
-            background-position:
-              50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,50% 50%,
-              12% -120%,52% -150%,86% -135%;
-          }
-        }
-        @keyframes dashRainFallFast{
-          0%{
-            background-position:
-              22% -60%,52% -110%,76% -90%,92% -130%,
-              12% -40%,38% -180%,64% -120%,88% -240%,
-              0% 0%;
-          }
-          100%{
-            background-position:
-              22% 320%,52% 360%,76% 340%,92% 380%,
-              12% 520%,38% 580%,64% 560%,88% 620%,
-              0% 0%;
-          }
-        }
-        @keyframes dashRainFallMed{ 0%{ transform: translate3d(0,0,0) scale(1); } 100%{ transform: translate3d(0,4px,0) scale(1.01);} }
-        @keyframes dashRainFallSlow{ 0%,100%{ filter: blur(0.10px) saturate(1.25);} 50%{ filter: blur(0.22px) saturate(1.45);} }
-        @keyframes dashRainDrift{
-          0%{ transform: translate3d(0,0,0) skewX(0deg); }
-          25%{ transform: translate3d(8px,-1px,0) skewX(-0.7deg); }
-          50%{ transform: translate3d(-10px,0px,0) skewX(0.9deg); }
-          75%{ transform: translate3d(7px,1px,0) skewX(-0.5deg); }
-          100%{ transform: translate3d(0,0,0) skewX(0deg); }
-        }
-        @keyframes dashRainFlicker{ 0%,100%{ opacity: 0.86;} 20%{ opacity:0.98;} 45%{ opacity:0.88;} 65%{ opacity:1;} 85%{ opacity:0.90;} }
-
-        @media (prefers-reduced-motion: reduce){
-          .dash-page::before, .dash-page::after{ animation:none; }
-        }
-
-        .dash-top{ align-items:center; gap:10px; flex-wrap: wrap; }
-        .dash-controls{ display:flex; gap:8px; flex-wrap: wrap; align-items:center; }
-
-        .dash-sigil{
-          color: rgba(212,175,55,0.92);
-          font-weight: 900;
-          text-shadow:
-            0 0 24px rgba(190,130,255,0.40),
-            0 0 30px rgba(120,70,255,0.26),
-            0 0 18px rgba(212,175,55,0.25);
-        }
-
-        /* Dropdown styling: black background + white text */
-        .dash-rangeWrap{ display:flex; align-items:center; position: relative; }
-        .dash-rangeSelect{
-          appearance: none;
-          -webkit-appearance: none;
-          -moz-appearance: none;
-          border-radius: 12px;
-          padding: 10px 36px 10px 12px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(0,0,0,0.88);
-          color: rgba(255,255,255,0.94);
-          font-weight: 950;
-          cursor: pointer;
-          box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
-          line-height: 1;
-        }
-        .dash-rangeSelect:focus{
-          outline: none;
-          border-color: rgba(212,175,55,0.38);
-          box-shadow: 0 0 0 4px rgba(212,175,55,0.12);
-        }
-        .dash-rangeWrap:after{
-          content:"▾";
-          position:absolute;
-          right: 12px;
-          top: 50%;
-          transform: translateY(-50%);
-          color: rgba(255,255,255,0.80);
-          pointer-events:none;
-          font-weight: 900;
-        }
-        .dash-rangeSelect option{ background:#000; color:#fff; }
-
-        /* ✅ KPI grid: always fits, no horizontal scrolling */
-        .dash-sub{
-          margin-top: 10px;
-          display:grid;
-          gap: 10px;
-        }
-        /* Desktop: 4 across */
-        .dash-subCompact{
-          grid-template-columns: repeat(4, minmax(0,1fr));
-        }
-
-        .dash-kpi{
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.05);
-        }
-        /* smaller, condensed cards */
-        .dash-kpiCompact{
-          padding: 10px 10px;
-          min-height: 88px;
-          display:flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-        .dash-kpiLabel{
-          font-size: 11px;
-          font-weight: 900;
-          color: rgba(255,255,255,0.70);
-          letter-spacing: .2px;
-        }
-        .dash-kpiValue{
-          margin-top: 6px;
-          font-size: 16px;
-          font-weight: 950;
-          line-height: 1.1;
-        }
-        .dash-nextSmall{
-          margin-top: 6px;
-          font-size: 11px;
-          font-weight: 850;
-          color: rgba(255,255,255,0.68);
-          line-height: 1.2;
-        }
-        .dash-eventTitle{
-          font-size: 13px !important;
-          font-weight: 950;
-          line-height: 1.15;
-          margin-top: 6px;
-        }
-        .dash-eventBtns{
-          margin-top: 8px;
-          display:flex;
-          gap: 8px;
+        .dash-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 16px;
           flex-wrap: wrap;
         }
-        /* Next event visual pop stays dreamy */
-        .dash-nextEvent{
-          border-color: rgba(var(--violet), 0.25);
-          background:
-            radial-gradient(220px 140px at 20% 10%, rgba(var(--violet),0.18), transparent 60%),
-            radial-gradient(220px 140px at 90% 60%, rgba(var(--pink),0.10), transparent 62%),
-            rgba(255,255,255,0.05);
-          box-shadow:
-            0 0 0 1px rgba(var(--violet),0.10) inset,
-            0 16px 40px rgba(var(--violet),0.10);
-        }
 
-        .dash-card{
-          margin-top: 10px;
-          padding: 10px;
-          background: rgba(0,0,0,0.28);
-        }
-        .dash-hint{ font-size: 12px; font-weight: 800; color: rgba(255,255,255,0.65); }
-
-        .dash-breakdown{
-          margin-top: 10px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.03);
-          overflow: hidden;
-        }
-        .dash-breakHead{
-          display:grid;
-          grid-template-columns: 1fr auto auto;
+        .dash-brandWrap {
+          display: flex;
+          align-items: center;
           gap: 12px;
-          padding: 10px 10px;
-          font-size: 11px;
-          font-weight: 900;
-          color: rgba(255,255,255,0.62);
-          border-bottom: 1px solid rgba(255,255,255,0.10);
         }
-        .dash-breakRow{
-          display:grid;
-          grid-template-columns: 1fr auto auto;
+
+        .dash-brandWrap h1 {
+          margin: 0;
+          font-size: clamp(1.7rem, 5vw, 2.7rem);
+          line-height: 1.1;
+          font-weight: 900;
+          background: linear-gradient(135deg, var(--red-1), var(--red-2));
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+
+        .dash-tools {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .dash-select {
+          min-width: 180px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          border: 1px solid var(--line);
+          background: rgba(12, 11, 13, 0.9);
+          color: var(--text);
+          font-weight: 700;
+        }
+
+        .btn {
+          border: 1px solid var(--line);
+          background: rgba(25, 16, 18, 0.8);
+          color: var(--text);
+          border-radius: 10px;
+          padding: 10px 12px;
+          font-weight: 700;
+          text-decoration: none;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .btn.primary {
+          background: linear-gradient(135deg, var(--red-1), var(--red-2));
+          border-color: transparent;
+        }
+
+        .dash-summaryGrid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 12px;
-          padding: 10px 10px;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(255,255,255,0.84);
+          margin-bottom: 16px;
         }
-        .dash-breakRow:last-child{ border-bottom:none; }
-        .dash-breakProfit{ text-align:right; color: rgba(255,255,255,0.78); white-space: nowrap; }
-        .dash-breakPct{ text-align:right; color: rgba(212,175,55,0.78); white-space: nowrap; }
 
-        .dash-lineWrap{
-          margin-top: 12px;
+        .dash-statCard {
+          background: linear-gradient(135deg, rgba(18, 12, 16, 0.9), rgba(8, 8, 10, 0.9));
+          border: 1px solid var(--line);
           border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background:
-            radial-gradient(260px 160px at 18% 18%, rgba(255,255,255,0.06), transparent 62%),
-            rgba(255,255,255,0.03);
-          padding: 10px;
-          overflow: hidden;
-          box-shadow: 0 18px 50px rgba(0,0,0,0.25);
+          padding: 14px 16px;
+          box-shadow: 0 10px 20px rgba(0,0,0,0.18);
         }
 
-        /* ✅ Slightly bigger graph (only change requested) */
-        .dash-lineSvg{
-          width: 100%;
-          height: 310px;
+        .dash-statCard span {
           display: block;
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--amber);
+          margin-bottom: 8px;
+          font-weight: 800;
         }
-        .dash-lineHint{
+
+        .dash-statCard strong {
+          font-size: clamp(1.1rem, 4vw, 1.8rem);
+          font-weight: 900;
+          background: linear-gradient(135deg, var(--red-1), var(--red-3));
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+
+        .dash-kpiGrid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        .dash-kpi {
+          background: linear-gradient(135deg, rgba(20,14,16,0.9), rgba(9,9,11,0.9));
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          padding: 14px;
+        }
+
+        .dash-kpiLabel {
+          font-size: 10px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--amber);
+          font-weight: 800;
+        }
+
+        .dash-kpiValue {
           margin-top: 8px;
-          font-size: 12px;
-          font-weight: 850;
-          color: rgba(255,255,255,0.62);
+          font-size: 1.1rem;
+          font-weight: 800;
+          line-height: 1.2;
+          background: linear-gradient(135deg, var(--red-1), var(--red-3));
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
         }
 
-        /* ✅ Mobile: 2x2 KPI grid so it fits with ZERO sideways scroll */
-        @media (max-width: 760px){
-          .dash-subCompact{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .smallValue {
+          font-size: 0.92rem;
+        }
 
-          .dash-kpiCompact{ min-height: 86px; }
-          .dash-kpiValue{ font-size: 15px; }
-          .dash-eventTitle{ font-size: 12px !important; }
+        .dash-nextEvent {
+          background: linear-gradient(135deg, rgba(255,85,85,0.12), rgba(15, 11, 13, 0.92));
+        }
 
-          .dash-breakHead, .dash-breakRow{ grid-template-columns: 1fr auto; }
-          .dash-breakPct{ display:none; }
+        .dash-nextText {
+          margin-top: 8px;
+          color: var(--muted);
+          font-size: 12px;
+          line-height: 1.35;
+        }
 
-          .dash-lineSvg{ height: 280px; }
+        .dash-eventActions {
+          display: flex;
+          gap: 8px;
+          margin-top: 10px;
+          flex-wrap: wrap;
+        }
+
+        .dash-error {
+          background: rgba(120, 20, 20, 0.35);
+          color: #ffd5d5;
+          border: 1px solid rgba(255, 100, 100, 0.4);
+          border-radius: 12px;
+          padding: 12px;
+          margin-bottom: 16px;
+        }
+
+        .dash-card {
+          background: linear-gradient(135deg, rgba(15, 11, 13, 0.92), rgba(8, 9, 11, 0.96));
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 16px;
+          box-shadow: 0 12px 28px rgba(0,0,0,0.2);
+        }
+
+        .dash-cardHeader {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 12px;
+          flex-wrap: wrap;
+        }
+
+        .dash-cardHeader h2 {
+          margin: 0;
+          font-size: 1.1rem;
+        }
+
+        .dash-cardHeader span {
+          color: var(--amber);
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          font-weight: 800;
+        }
+
+        .dash-table {
+          display: grid;
+          gap: 8px;
+          margin-bottom: 16px;
+        }
+
+        .dash-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          gap: 12px;
+          align-items: center;
+          padding: 10px 12px;
+          background: rgba(255,255,255,0.02);
+          border: 1px solid rgba(255,255,255,0.05);
+          border-radius: 10px;
+        }
+
+        .dash-row span {
+          color: var(--muted);
+          font-size: 0.9rem;
+        }
+
+        .dash-row strong {
+          color: var(--red-3);
+          font-size: 0.95rem;
+          font-weight: 800;
+        }
+
+        .dash-row em {
+          color: var(--amber);
+          font-style: normal;
+          font-size: 0.8rem;
+          font-weight: 700;
+          text-align: right;
+        }
+
+        .dash-chartWrap {
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          background: rgba(255,255,255,0.02);
+          padding: 12px 8px 8px;
+        }
+
+        .dash-chart {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-around;
+          gap: 10px;
+          min-height: 260px;
+          padding-top: 8px;
+        }
+
+        .dash-barItem {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+        }
+
+        .dash-barTrack {
+          width: 100%;
+          max-width: 46px;
+          height: 180px;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.04);
+          border-radius: 8px 8px 0 0;
+          overflow: hidden;
+        }
+
+        .dash-bar {
+          width: 100%;
+          min-height: 10%;
+          background: linear-gradient(180deg, var(--red-3), var(--red-2));
+          border-radius: 8px 8px 0 0;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 0 16px rgba(255,85,85,0.22);
+        }
+
+        .dash-barValue {
+          font-size: 9px;
+          font-weight: 800;
+          color: var(--amber);
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .dash-barLabel {
+          font-size: 9px;
+          color: var(--muted);
+          text-align: center;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          font-weight: 700;
+        }
+
+        @media (max-width: 760px) {
+          .dash-page { padding: 12px; }
+
+          .dash-kpiGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dash-summaryGrid {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .dash-chart {
+            min-height: 220px;
+          }
+
+          .dash-barTrack {
+            height: 150px;
+          }
+        }
+
+        @media (max-width: 560px) {
+          .dash-top {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .dash-tools {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr auto;
+          }
+
+          .dash-select {
+            width: 100%;
+            min-width: 0;
+          }
+
+          .dash-summaryGrid,
+          .dash-kpiGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .dash-brandWrap {
+            width: 100%;
+          }
+
+          .dash-row {
+            grid-template-columns: 1fr auto;
+          }
+
+          .dash-row em {
+            display: none;
+          }
+
+          .dash-barTrack {
+            height: 120px;
+          }
+
+          .dash-barValue {
+            font-size: 8px;
+          }
+
+          .dash-barLabel {
+            font-size: 8px;
+          }
         }
       `}</style>
     </div>

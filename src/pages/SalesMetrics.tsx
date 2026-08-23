@@ -1,21 +1,10 @@
-// src/pages/SalesMetrics.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-type SellerRow = {
-  id: number;
-  name: string;
-  active?: boolean | null;
-  created_at?: string | null;
-};
-
 type SaleRow = {
   id: number;
-  sale_date: string | null; // YYYY-MM-DD
-  seller_id: number | null;
+  sale_date: string | null;
   notes: string | null;
-  created_at?: string | null;
-  seller_name?: string | null; // derived
 };
 
 type SaleLineRow = {
@@ -26,10 +15,11 @@ type SaleLineRow = {
   fees: number | null;
 };
 
-type InvRow = {
+type InventoryRow = {
   id: number;
-  cost: number | null;
-  category?: string | null; // ✅ NEW
+  name?: string | null;
+  item?: string | null;
+  cost?: number | null;
 };
 
 function toNum(v: any, fallback = 0) {
@@ -41,1070 +31,598 @@ function toNum(v: any, fallback = 0) {
 }
 
 function money(n: number) {
-  const v = Number.isFinite(n) ? n : 0;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+  return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
-function ymFromISO(iso: string | null) {
-  if (!iso) return { y: "", m: "" };
-  const y = iso.slice(0, 4);
-  const m = iso.slice(5, 7);
-  return { y, m };
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
 }
 
-function monthName(m: string) {
-  if (m === "ALL") return "All time";
-  const map: Record<string, string> = {
-    "01": "Jan",
-    "02": "Feb",
-    "03": "Mar",
-    "04": "Apr",
-    "05": "May",
-    "06": "Jun",
-    "07": "Jul",
-    "08": "Aug",
-    "09": "Sep",
-    "10": "Oct",
-    "11": "Nov",
-    "12": "Dec",
-  };
-  return map[m] ?? m;
-}
-
-function norm(s: string) {
-  return s.trim().toLowerCase();
-}
-
-// ✅ DISPLAY NAMES (visual-only): Chad -> Chadillac, Devan -> Devan the Dude
-function nicknameFor(name: string) {
-  const n = norm(name);
-  if (n === "chad") return "Chadillac";
-  if (n === "devan") return "Devan the Dude";
-  return "";
-}
-function displaySellerName(name: string) {
-  const nick = nicknameFor(name);
-  return nick || name;
-}
-
-// ✅ for styling recent rows (visual-only)
-function sellerTone(name: string | null | undefined) {
-  const n = norm(String(name ?? ""));
-  if (n === "chad") return "chad";
-  if (n === "devan") return "devan";
-  return "other";
-}
-
-const CATEGORIES_TABLE = "inventory_categories";
-const INVENTORY_TABLE = "inventory";
-const INVENTORY_CATEGORY_COL = "category";
+type TimeframeType = "current" | "last3" | "last6" | "year" | "custom";
 
 export default function SalesMetrics() {
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-
-  // filters
-  const now = new Date();
-  const [year, setYear] = useState(String(now.getFullYear()));
-  const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
-  const [seller, setSeller] = useState<string>("ALL"); // stores REAL name
-
-  // ✅ NEW: category multi-select filter
-  const [catLoading, setCatLoading] = useState(false);
-  const [catErr, setCatErr] = useState("");
-  const [categories, setCategories] = useState<string[]>([]);
-  const [selectedCats, setSelectedCats] = useState<string[]>([]); // empty => All
-
-  // data
-  const [sellerTable, setSellerTable] = useState<string>("sales_people");
-  const [sellers, setSellers] = useState<SellerRow[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [saleLines, setSaleLines] = useState<SaleLineRow[]>([]);
-  const [inv, setInv] = useState<InvRow[]>([]);
+  const [inventory, setInventory] = useState<InventoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
 
-  // add salesperson sheet (kept)
-  const [addOpen, setAddOpen] = useState(false);
-  const [newSellerName, setNewSellerName] = useState("");
-
-  async function detectSellerTable(): Promise<string> {
-    const candidates = ["sales_people", "sale_sellers", "sellers"];
-    for (const t of candidates) {
-      const res = await supabase.from(t).select("id").limit(1);
-      if (!res.error) return t;
-    }
-    return "sales_people";
-  }
-
-  async function loadCategories() {
-    setCatLoading(true);
-    setCatErr("");
-
-    try {
-      const res = await supabase.from(CATEGORIES_TABLE).select("name").order("name", { ascending: true });
-      if (res.error) throw res.error;
-
-      const list = ((res.data as any[]) ?? [])
-        .map((r) => String(r?.name ?? "").trim())
-        .filter(Boolean);
-
-      setCategories(list);
-      // do NOT auto-select anything; empty means "All"
-    } catch (e: any) {
-      setCategories([]);
-      setCatErr(e?.message ?? "Failed to load categories.");
-    } finally {
-      setCatLoading(false);
-    }
-  }
-
-  async function loadAll() {
-    setLoading(true);
-    setErr("");
-
-    try {
-      // ✅ categories (safe even if table missing, but yours exists now)
-      await loadCategories();
-
-      const st = await detectSellerTable();
-      setSellerTable(st);
-
-      // 1) sellers
-      const sRes = await supabase.from(st).select("id,name,active,created_at").order("name", { ascending: true });
-      const sellerRows = !sRes.error ? (((sRes.data as any) ?? []) as SellerRow[]) : [];
-      setSellers(sellerRows);
-
-      // map seller_id -> name
-      const sellerIdToName = new Map<number, string>();
-      for (const r of sellerRows) sellerIdToName.set(Number(r.id), String(r.name ?? ""));
-
-      // 2) sales headers
-      const salesRes = await supabase
-        .from("sales")
-        .select("id,sale_date,created_at,notes,seller_id")
-        .order("sale_date", { ascending: false })
-        .limit(5000);
-
-      if (salesRes.error) throw salesRes.error;
-
-      const salesRows = (((salesRes.data as any) ?? []) as SaleRow[]).map((r) => ({
-        ...r,
-        seller_name: r.seller_id != null ? sellerIdToName.get(Number(r.seller_id)) ?? null : null,
-      }));
-
-      setSales(salesRows);
-
-      const saleIds = salesRows.map((s) => s.id).filter(Boolean);
-      if (!saleIds.length) {
-        setSaleLines([]);
-        setInv([]);
-        setLoading(false);
-        return;
-      }
-
-      // 3) sale_lines
-      const linesRes = await supabase.from("sale_lines").select("sale_id,item_id,units,price,fees").in("sale_id", saleIds);
-      if (linesRes.error) throw linesRes.error;
-
-      const linesRows = ((linesRes.data as any) ?? []) as SaleLineRow[];
-      setSaleLines(linesRows);
-
-      // 4) inventory costs + category ✅
-      const itemIds = Array.from(new Set(linesRows.map((l) => l.item_id).filter(Boolean))).map(Number);
-      if (!itemIds.length) {
-        setInv([]);
-        return;
-      }
-
-      const invRes = await supabase.from(INVENTORY_TABLE).select(`id,cost,${INVENTORY_CATEGORY_COL}`).in("id", itemIds);
-      if (invRes.error) throw invRes.error;
-
-      setInv(((invRes.data as any) ?? []) as InvRow[]);
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-      setSellers([]);
-      setSales([]);
-      setSaleLines([]);
-      setInv([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [timeframe, setTimeframe] = useState<TimeframeType>("current");
+  const [year, setYear] = useState<string>(String(new Date().getFullYear()));
+  const [month, setMonth] = useState<string>(String(new Date().getMonth() + 1).padStart(2, "0"));
 
   const yearOptions = useMemo(() => {
-    const ys = new Set<string>();
-    for (const r of sales) {
-      const { y } = ymFromISO(r.sale_date);
-      if (y) ys.add(y);
+    const years = [];
+    for (let i = 0; i < 8; i++) {
+      years.push(String(new Date().getFullYear() - i));
     }
-    ys.add(String(new Date().getFullYear()));
-    return Array.from(ys).sort((a, b) => Number(b) - Number(a));
-  }, [sales]);
+    return years;
+  }, []);
 
-  const linesBySale = useMemo(() => {
-    const map = new Map<number, SaleLineRow[]>();
-    for (const l of saleLines) {
-      const sid = Number(l.sale_id);
-      const arr = map.get(sid) ?? [];
-      arr.push(l);
-      map.set(sid, arr);
-    }
-    return map;
-  }, [saleLines]);
+  useEffect(() => {
+    async function load() {
+      try {
+        setLoading(true);
+        setErr("");
 
-  const invById = useMemo(() => {
-    const map = new Map<number, InvRow>();
-    for (const r of inv) map.set(Number(r.id), r);
-    return map;
-  }, [inv]);
+        const [salesRes, linesRes, invRes] = await Promise.all([
+          supabase.from("sales").select("id,sale_date,notes"),
+          supabase.from("sale_lines").select("sale_id,item_id,units,price,fees"),
+          supabase.from("inventory").select("id,item,cost"),
+        ]);
 
-  const invCostById = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const r of inv) map.set(Number(r.id), toNum(r.cost, 0));
-    return map;
-  }, [inv]);
+        if (salesRes.error) throw salesRes.error;
+        if (linesRes.error) throw linesRes.error;
+        if (invRes.error) throw invRes.error;
 
-  // ✅ NEW: helper to get categories present in a sale
-  function saleMatchesSelectedCategories(saleId: number) {
-    if (!selectedCats.length) return true; // empty => All
-    const wanted = new Set(selectedCats.map((c) => c.toLowerCase()));
-
-    const ls = linesBySale.get(Number(saleId)) ?? [];
-    for (const l of ls) {
-      const item = invById.get(Number(l.item_id));
-      const cat = String((item as any)?.[INVENTORY_CATEGORY_COL] ?? "").trim();
-      if (!cat) continue;
-      if (wanted.has(cat.toLowerCase())) return true;
-    }
-    return false;
-  }
-
-  // ✅ filtered sales: year/month/seller + category multi-select
-  const filteredSales = useMemo(() => {
-    const allTime = year === "ALL" || month === "ALL";
-
-    return sales.filter((r) => {
-      const { y, m } = ymFromISO(r.sale_date);
-
-      if (!allTime) {
-        if (year && y !== year) return false;
-        if (month && m !== month) return false;
+        setSales(salesRes.data || []);
+        setSaleLines(linesRes.data || []);
+        setInventory(invRes.data || []);
+      } catch (e: any) {
+        setErr(e.message || "Failed to load sales");
+      } finally {
+        setLoading(false);
       }
+    }
 
-      if (seller !== "ALL") {
-        const sName = (r.seller_name ?? "").trim();
-        if (sName !== seller) return false;
+    load();
+  }, []);
+
+  const invNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const item of inventory) {
+      const name = String(item.item ?? item.name ?? "").trim() || "Unknown";
+      map.set(item.id, name);
+    }
+    return map;
+  }, [inventory]);
+
+  const dateRange = useMemo(() => {
+    const today = new Date();
+    
+    if (timeframe === "current") {
+      const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { startDate, endDate };
+    } else if (timeframe === "last3") {
+      const endDate = new Date();
+      const startDate = addMonths(new Date(), -3);
+      return { startDate, endDate };
+    } else if (timeframe === "last6") {
+      const endDate = new Date();
+      const startDate = addMonths(new Date(), -6);
+      return { startDate, endDate };
+    } else if (timeframe === "year") {
+      const startDate = new Date(`${year}-01-01`);
+      const endDate = new Date(`${year}-12-31`);
+      return { startDate, endDate };
+    } else {
+      // custom
+      const startDate = new Date(`${year}-${month}-01`);
+      const endDate = new Date(parseInt(year), parseInt(month), 0);
+      return { startDate, endDate };
+    }
+  }, [timeframe, year, month]);
+
+  const filteredSalesWithLines = useMemo(() => {
+    const linesBySale = new Map<number, SaleLineRow[]>();
+    for (const line of saleLines) {
+      if (!linesBySale.has(line.sale_id)) {
+        linesBySale.set(line.sale_id, []);
       }
+      linesBySale.get(line.sale_id)!.push(line);
+    }
 
-      // ✅ category filter
-      if (!saleMatchesSelectedCategories(Number(r.id))) return false;
-
-      return true;
+    const filtered = sales.filter((s) => {
+      if (!s.sale_date) return false;
+      const saleDate = new Date(s.sale_date);
+      return saleDate >= dateRange.startDate && saleDate <= dateRange.endDate;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sales, seller, year, month, selectedCats, linesBySale, invById]);
 
-  const metrics = useMemo(() => {
-    const count = filteredSales.length;
+    const result = filtered.map((s) => ({
+      sale: s,
+      lines: linesBySale.get(s.id) ?? [],
+    }));
 
-    let sumSales = 0;
-    let sumFees = 0;
-    let sumCost = 0;
-    let sumProfit = 0;
-    let totalUnits = 0;
+    return result.sort((a, b) => (b.sale.sale_date || "").localeCompare(a.sale.sale_date || ""));
+  }, [sales, saleLines, dateRange]);
 
-    for (const s of filteredSales) {
-      const saleId = Number(s.id);
-      const ls = linesBySale.get(saleId) ?? [];
+  const stats = useMemo(() => {
+    let totalRevenue = 0;
+    let totalFees = 0;
+    let saleCount = 0;
+    const products = new Set<string>();
 
-      let salePrice = 0;
-      let saleFees = 0;
-      let saleCost = 0;
-      let saleUnits = 0;
-
-      for (const l of ls) {
-        const price = toNum(l.price, 0);
-        const fees = toNum(l.fees, 0);
-        const units = Math.max(0, toNum(l.units, 0));
-        const costEach = invCostById.get(Number(l.item_id)) ?? 0;
-
-        salePrice += price;
-        saleFees += fees;
-        saleUnits += units;
-        saleCost += costEach * units;
+    for (const { lines } of filteredSalesWithLines) {
+      if (lines.length > 0) {
+        saleCount++;
+        for (const line of lines) {
+          totalRevenue += toNum(line.price, 0);
+          totalFees += toNum(line.fees, 0);
+          const name = invNameById.get(line.item_id) ?? "Unknown";
+          products.add(name);
+        }
       }
-
-      sumSales += salePrice;
-      sumFees += saleFees;
-      sumCost += saleCost;
-      totalUnits += saleUnits;
-      sumProfit += salePrice - saleFees - saleCost;
     }
 
     return {
-      count,
-      sumSales,
-      sumProfit,
-      sumFees,
-      sumCost,
-      avgSellingPricePerSale: count ? sumSales / count : 0,
-      avgItemsPerSale: count ? totalUnits / count : 0,
-      avgProfitPerSale: count ? sumProfit / count : 0,
+      totalRevenue,
+      totalFees,
+      saleCount,
+      productCount: products.size,
     };
-  }, [filteredSales, linesBySale, invCostById]);
-
-  async function addSalesperson() {
-    const name = newSellerName.trim();
-    if (!name) return;
-
-    setLoading(true);
-    setErr("");
-
-    try {
-      const ins = await supabase.from(sellerTable).insert([{ name, active: true } as any]);
-      if (ins.error) {
-        const ins2 = await supabase.from(sellerTable).insert([{ name } as any]);
-        if (ins2.error) throw ins2.error;
-      }
-      setNewSellerName("");
-      setAddOpen(false);
-      await loadAll();
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const selectedSellerDisplay = useMemo(() => {
-    if (seller === "ALL") return "All Salespeople";
-    return displaySellerName(seller);
-  }, [seller]);
-
-  const selectedSellerNickname = useMemo(() => {
-    if (seller === "ALL") return "";
-    return nicknameFor(seller);
-  }, [seller]);
-
-  const timeLabel = useMemo(() => {
-    const allTime = year === "ALL" || month === "ALL";
-    if (allTime) return "All time";
-    return `${monthName(month)} ${year}`;
-  }, [year, month]);
-
-  const selectedCatsLabel = useMemo(() => {
-    if (!selectedCats.length) return "All categories";
-    if (selectedCats.length === 1) return selectedCats[0];
-    return `${selectedCats.length} categories`;
-  }, [selectedCats]);
+  }, [filteredSalesWithLines, invNameById]);
 
   return (
-    <div className="page smX">
-      {/* ✅ VISUAL ONLY: Platinum / diamond black+white theme. Function unchanged. */}
+    <div style={{ padding: "20px 16px 32px", color: "rgba(255,255,255,0.95)", fontFamily: "'Segoe UI', sans-serif" }}>
       <style>{`
-        .smX{
-          position: relative;
-          isolation: isolate;
-          overflow: hidden;
-        }
-        .smX > *{ position: relative; z-index: 2; }
-
-        .smX::before{
-          content:"";
-          position: fixed;
-          inset: 0;
-          z-index: 0;
-          pointer-events:none;
-          background:
-            radial-gradient(1100px 680px at 18% 6%, rgba(255,255,255,0.08), transparent 62%),
-            radial-gradient(980px 640px at 86% 18%, rgba(255,255,255,0.06), transparent 64%),
-            radial-gradient(900px 620px at 45% 98%, rgba(0,0,0,0.86), transparent 55%),
-            linear-gradient(180deg, rgba(0,0,0,0.62), rgba(0,0,0,0.86));
-          opacity: 1;
-        }
-
-        .smX::after{
-          content:"";
-          position: fixed;
-          inset: -60px;
-          z-index: 1;
-          pointer-events:none;
-          opacity: 0.75;
-          mix-blend-mode: screen;
-          filter: saturate(0.85) contrast(1.12);
-          background:
-            repeating-linear-gradient(45deg,
-              rgba(255,255,255,0.00) 0 18px,
-              rgba(255,255,255,0.06) 19px,
-              rgba(255,255,255,0.00) 38px
-            ),
-            repeating-linear-gradient(-45deg,
-              rgba(255,255,255,0.00) 0 18px,
-              rgba(255,255,255,0.05) 19px,
-              rgba(255,255,255,0.00) 38px
-            ),
-            radial-gradient(circle at 18% 22%, rgba(255,255,255,0.18), rgba(255,255,255,0.00) 22%),
-            radial-gradient(circle at 72% 34%, rgba(255,255,255,0.14), rgba(255,255,255,0.00) 24%),
-            radial-gradient(circle at 40% 68%, rgba(255,255,255,0.10), rgba(255,255,255,0.00) 28%);
-          animation: diamondFlutter 7.2s ease-in-out infinite;
-          transform: translateZ(0);
-        }
-
-        @keyframes diamondFlutter{
-          0%   { transform: translate3d(0px,0px,0px) rotate(0.001deg); opacity: 0.58; filter: blur(0.2px); }
-          35%  { transform: translate3d(10px,-8px,0px) rotate(0.001deg); opacity: 0.82; filter: blur(0.0px); }
-          70%  { transform: translate3d(-8px,6px,0px) rotate(0.001deg); opacity: 0.72; filter: blur(0.15px); }
-          100% { transform: translate3d(0px,0px,0px) rotate(0.001deg); opacity: 0.58; filter: blur(0.2px); }
-        }
-
-        @media (prefers-reduced-motion: reduce){
-          .smX::after{ animation:none; }
-        }
-
-        .smX .topRow{
-          display:flex; align-items:flex-start; justify-content: space-between;
-          gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
-        }
-        .smX .controls{
-          display:flex; gap: 10px; flex-wrap: wrap; align-items:center; justify-content:flex-end;
-        }
-
-        .salesTitleWrap{
-          display: inline-flex;
-          align-items: center;
-          gap: 10px;
-          position: relative;
-        }
-
-        .salesTitle{
-          margin: 0;
-          font-weight: 1000;
-          letter-spacing: 1.2px;
-          text-transform: uppercase;
-          line-height: 1.02;
-          position: relative;
-
-          background: linear-gradient(90deg,
-            rgba(255,255,255,0.98),
-            rgba(210,210,210,0.98),
-            rgba(255,255,255,0.95),
-            rgba(160,160,160,0.98),
-            rgba(255,255,255,0.98)
-          );
-          background-size: 240% 100%;
-          -webkit-background-clip: text;
-          background-clip: text;
-          color: transparent;
-
-          text-shadow:
-            0 0 18px rgba(255,255,255,0.10),
-            0 0 28px rgba(255,255,255,0.08),
-            0 20px 70px rgba(0,0,0,0.80);
-
-          animation: titleDiamondSheen 2.8s linear infinite;
-        }
-
-        .salesTitle::after{
-          content:"";
-          position:absolute;
-          inset: -6px -18px -6px -18px;
-          border-radius: 16px;
-          pointer-events:none;
-          background: linear-gradient(
-            110deg,
-            transparent 0%,
-            rgba(255,255,255,0.00) 35%,
-            rgba(255,255,255,0.25) 45%,
-            rgba(255,255,255,0.08) 55%,
-            transparent 70%
-          );
-          transform: translateX(-70%) skewX(-10deg);
-          mix-blend-mode: screen;
-          opacity: 0.85;
-          animation: titleSweep 3.0s linear infinite;
-        }
-
-        @keyframes titleDiamondSheen{
-          0%   { background-position: 0% 50%; }
-          100% { background-position: 240% 50%; }
-        }
-        @keyframes titleSweep{
-          0%   { transform: translateX(-70%) skewX(-10deg); opacity: 0.55; }
-          45%  { opacity: 0.95; }
-          100% { transform: translateX(70%) skewX(-10deg); opacity: 0.60; }
-        }
-
-        .salesBadge{
-          height: 26px;
-          padding: 0 10px;
-          border-radius: 999px;
-          display: inline-flex;
-          align-items: center;
-          font-size: 12px;
-          font-weight: 950;
-          letter-spacing: 0.7px;
-          color: rgba(255,255,255,0.88);
-          border: 1px solid rgba(255,255,255,0.16);
-          background:
-            radial-gradient(160px 44px at 30% 10%, rgba(255,255,255,0.12), transparent 60%),
-            linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.55));
-          box-shadow:
-            0 0 0 2px rgba(255,255,255,0.06),
-            0 12px 32px rgba(0,0,0,0.45),
-            0 0 22px rgba(255,255,255,0.08);
-          user-select: none;
-        }
-
-        @media (max-width: 420px){
-          .salesTitle{ font-size: 26px; }
-        }
-
-        .smX .filterRow{
-          margin-top: 10px; display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
-        }
-        .smX .filterRow .full{ grid-column: 1 / -1; }
-
-        .smX .grid{
-          margin-top: 12px; display:grid; grid-template-columns: repeat(12, 1fr); gap: 10px;
-        }
-
-        .smX .cardKpi{
-          grid-column: span 6;
-          padding: 12px;
-          position: relative;
-          overflow: hidden;
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(0,0,0,0.30);
-          backdrop-filter: blur(12px);
-          box-shadow:
-            0 18px 60px rgba(0,0,0,0.55),
-            0 0 0 1px rgba(255,255,255,0.04) inset;
-          transition: transform 0.14s ease, box-shadow 0.22s ease, border-color 0.22s ease, filter 0.22s ease;
-        }
-
-        .smX .cardKpi::before{
-          content:"";
-          position:absolute;
-          inset:-2px;
-          pointer-events:none;
-          background:
-            radial-gradient(720px 260px at 15% 0%, rgba(255,255,255,0.10), transparent 60%),
-            radial-gradient(640px 240px at 85% 40%, rgba(255,255,255,0.08), transparent 62%),
-            linear-gradient(180deg, rgba(255,255,255,0.06), transparent);
-          opacity: 0.80;
-          mix-blend-mode: screen;
-        }
-
-        .smX .cardKpi:hover{
-          transform: translateY(-2px);
-          border-color: rgba(255,255,255,0.26);
-          box-shadow:
-            0 22px 80px rgba(0,0,0,0.62),
-            0 0 30px rgba(255,255,255,0.10);
-          filter: brightness(1.06);
-        }
-
-        .smX .kpiLabel{
-          font-size: 12px; font-weight: 950; color: rgba(255,255,255,0.72);
-          position: relative; z-index: 1;
-          text-shadow: 0 0 12px rgba(0,0,0,0.40);
-        }
-
-        .smX .kpiVal{
-          margin-top: 5px; font-size: 22px; font-weight: 950;
-          position: relative; z-index: 1;
-          text-shadow:
-            0 0 18px rgba(255,255,255,0.10),
-            0 12px 34px rgba(0,0,0,0.65);
-        }
-
-        .btnPop{
-          position: relative;
-          isolation: isolate;
-          transform: translateZ(0);
-          border-color: rgba(255,255,255,0.22) !important;
-          box-shadow:
-            0 0 0 2px rgba(255,255,255,0.08),
-            0 16px 40px rgba(0,0,0,0.44),
-            0 0 28px rgba(255,255,255,0.10);
-          animation: btnPopPulse 1.2s ease-in-out infinite;
-        }
-        .btnPop::before{
-          content:"";
-          position:absolute;
-          inset:-3px;
-          border-radius: inherit;
-          pointer-events:none;
-          background:
-            radial-gradient(240px 90px at 30% 10%, rgba(255,255,255,0.22), transparent 65%),
-            radial-gradient(260px 110px at 70% 40%, rgba(255,255,255,0.16), transparent 70%),
-            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.26), rgba(255,255,255,0.00));
-          mix-blend-mode: screen;
-          opacity: 0.72;
-          filter: blur(0.1px);
-          animation: btnPopSheen 1.8s linear infinite;
-        }
-        .btnPop::after{
-          content:"";
-          position:absolute;
-          inset:-10px;
-          border-radius: inherit;
-          pointer-events:none;
-          background: radial-gradient(closest-side, rgba(255,255,255,0.22), transparent 70%);
-          opacity: 0.0;
-          animation: btnPopRing 1.2s ease-out infinite;
-        }
-
-        @keyframes btnPopPulse{
-          0%   { transform: translateY(0px) scale(1); filter: brightness(1.02) saturate(0.95); }
-          50%  { transform: translateY(-1px) scale(1.02); filter: brightness(1.18) saturate(1.02); }
-          100% { transform: translateY(0px) scale(1); filter: brightness(1.02) saturate(0.95); }
-        }
-        @keyframes btnPopSheen{
-          0%   { background-position: -120% 0%; opacity: 0.55; }
-          40%  { opacity: 0.95; }
-          100% { background-position: 220% 0%; opacity: 0.55; }
-        }
-        @keyframes btnPopRing{
-          0%   { opacity: 0.30; transform: scale(0.92); }
-          60%  { opacity: 0.10; transform: scale(1.18); }
-          100% { opacity: 0.0; transform: scale(1.28); }
-        }
-
-        @media (prefers-reduced-motion: reduce){
-          .btnPop{ animation:none; }
-          .btnPop::before, .btnPop::after{ animation:none; }
-          .salesTitle{ animation:none; }
-          .salesTitle::after{ animation:none; }
-        }
-
-        .smX .list{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.26); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; backdrop-filter: blur(12px); }
-        .smX .saleRow{
-          display:flex; justify-content: space-between; gap: 10px; padding: 10px 0;
-          border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        .smX .saleRow:last-child{ border-bottom:none; }
-        .smX .left{ min-width: 0; }
-        .smX .title{
-          font-weight: 950; overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .smX .meta{
-          margin-top: 3px; font-size: 12px; color: rgba(255,255,255,0.65);
-          overflow:hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .smX .right{ text-align:right; flex: 0 0 auto; }
-
-        .saleGlow{
-          position: relative;
-          padding: 10px 0;
-          margin: 0;
-        }
-        .saleGlow::before{
-          content:"";
-          position:absolute;
-          left: -10px;
-          right: -10px;
-          top: 0px;
-          bottom: 0px;
+        .salesMetricsCard {
+          background: linear-gradient(135deg, rgba(20, 14, 16, 0.85) 0%, rgba(25, 16, 20, 0.85) 100%);
+          border: 1px solid rgba(220, 50, 60, 0.25);
           border-radius: 14px;
-          pointer-events:none;
-          opacity: 0.0;
-          transform: scale(0.995);
-          transition: opacity .18s ease, transform .18s ease;
-          background:
-            radial-gradient(420px 90px at 22% 40%, rgba(255,255,255,0.10), transparent 70%),
-            radial-gradient(520px 110px at 82% 40%, rgba(255,255,255,0.08), transparent 72%),
-            linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.14), rgba(255,255,255,0.00));
-          box-shadow:
-            0 0 0 1px rgba(255,255,255,0.10) inset,
-            0 0 24px rgba(255,255,255,0.06);
-        }
-        .saleGlow:hover::before{
-          opacity: 0.78;
-          transform: scale(1);
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), 0 0 30px rgba(220, 50, 60, 0.12);
+          padding: 18px;
+          backdrop-filter: blur(12px);
         }
 
-        .saleGlow.chad::before{ filter: hue-rotate(8deg) brightness(1.02); }
-        .saleGlow.devan::before{ filter: hue-rotate(-8deg) brightness(1.02); }
-        .saleGlow.other::before{ filter: brightness(0.98); }
-
-        .smX .overlay{
-          position: fixed; inset: 0; background: rgba(0,0,0,0.78);
-          display:flex; align-items:flex-end; justify-content:center; padding: 10px; z-index: 500;
-        }
-        .smX .sheet{
-          width: min(980px, 100%);
-          border-radius: 22px;
-          border: 1px solid rgba(255,255,255,0.18);
-          background: rgba(8,10,14,0.92);
-          padding: 14px;
-          box-shadow: 0 24px 80px rgba(0,0,0,0.70), 0 0 30px rgba(255,255,255,0.08);
-          backdrop-filter: blur(14px);
-        }
-
-        /* ✅ NEW: category multi select styling */
-        .catBox{
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(0,0,0,0.20);
-          border-radius: 16px;
-          padding: 10px;
-        }
-        .catRow{
-          display:flex;
-          gap: 10px;
-          align-items:center;
-          justify-content: space-between;
-          margin-bottom: 8px;
-          flex-wrap: wrap;
-        }
-        .catPills{
-          display:flex;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-        .catPill{
-          display:inline-flex;
-          align-items:center;
-          gap: 8px;
-          padding: 8px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.04);
-          cursor: pointer;
-          user-select:none;
+        .smTitle {
+          font-size: clamp(32px, 6vw, 44px);
           font-weight: 900;
+          margin: 0 0 8px 0;
+          background: linear-gradient(135deg, #ff5555 0%, #cc3333 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+
+        .smSubtitle {
+          font-size: 14px;
+          color: rgba(255, 150, 160, 0.75);
+          margin-bottom: 20px;
+          font-weight: 600;
+        }
+
+        .kpiRow {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 12px;
+          margin-bottom: 20px;
+        }
+
+        .kpiCard {
+          background: linear-gradient(135deg, rgba(35, 20, 23, 0.7) 0%, rgba(28, 16, 20, 0.7) 100%);
+          border: 1px solid rgba(220, 50, 60, 0.2);
+          border-radius: 12px;
+          padding: 14px;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), 0 0 20px rgba(220, 50, 60, 0.1);
+          transition: all 0.3s ease;
+        }
+
+        .kpiCard:hover {
+          border-color: rgba(220, 80, 90, 0.4);
+          box-shadow: 0 10px 28px rgba(220, 50, 60, 0.2), 0 0 30px rgba(220, 50, 60, 0.12);
+          transform: translateY(-2px);
+        }
+
+        .kpiLabel {
           font-size: 12px;
-          color: rgba(255,255,255,0.86);
-        }
-        .catPill.active{
-          border-color: rgba(255,255,255,0.30);
-          background: rgba(255,255,255,0.10);
-          color: rgba(255,255,255,0.95);
-          box-shadow: 0 0 0 3px rgba(255,255,255,0.06);
+          font-weight: 700;
+          color: rgba(255, 150, 160, 0.75);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: 6px;
         }
 
-        input, select, textarea { font-size: 16px; }
+        .kpiValue {
+          font-size: clamp(18px, 3vw, 24px);
+          font-weight: 900;
+          color: rgba(255, 200, 200, 0.95);
+          text-shadow: 0 2px 8px rgba(220, 50, 60, 0.2);
+        }
 
-        @media (max-width: 820px){
-          .smX .cardKpi{ grid-column: span 12; }
-          .smX .filterRow{ grid-template-columns: 1fr; }
+        .quickBtns {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 12px;
+        }
+
+        .quickBtn {
+          padding: 10px 14px;
+          border-radius: 10px;
+          border: 1.5px solid rgba(220, 50, 60, 0.3);
+          background: rgba(30, 20, 22, 0.6);
+          color: rgba(255, 255, 255, 0.85);
+          cursor: pointer;
+          font-weight: 700;
+          font-size: 12px;
+          white-space: nowrap;
+          transition: all 0.25s ease;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .quickBtn:hover {
+          border-color: rgba(220, 80, 90, 0.6);
+          background: rgba(50, 25, 28, 0.8);
+          box-shadow: 0 6px 14px rgba(220, 50, 60, 0.2);
+          transform: translateY(-2px);
+        }
+
+        .quickBtn.active {
+          border-color: rgba(255, 80, 90, 0.8);
+          background: linear-gradient(135deg, rgba(220, 50, 60, 0.4) 0%, rgba(180, 30, 40, 0.4) 100%);
+          color: rgba(255, 200, 200, 1);
+          box-shadow: 0 6px 16px rgba(220, 50, 60, 0.3);
+          font-weight: 800;
+        }
+
+        .filterSection {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        .filterField {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .filterLabel {
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(255, 150, 160, 0.75);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .filterInput {
+          border: 1.5px solid rgba(220, 50, 60, 0.3);
+          border-radius: 10px;
+          background: rgba(18, 12, 14, 0.8);
+          color: rgba(255, 255, 255, 0.92);
+          padding: 10px 12px;
+          font-size: 14px;
+          outline: none;
+          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+          transition: all 0.25s ease;
+          font-weight: 500;
+        }
+
+        .filterInput:hover {
+          border-color: rgba(220, 80, 90, 0.5);
+          box-shadow: 0 6px 14px rgba(220, 50, 60, 0.15);
+        }
+
+        .filterInput:focus {
+          border-color: rgba(255, 100, 110, 0.7);
+          box-shadow: 0 0 0 3px rgba(220, 50, 60, 0.15), 0 6px 16px rgba(220, 50, 60, 0.2);
+        }
+
+        .filterInput option {
+          background: rgba(18, 12, 14, 0.95);
+          color: rgba(255, 255, 255, 0.92);
+        }
+
+        .salesList {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .saleItem {
+          background: linear-gradient(135deg, rgba(25, 16, 20, 0.8) 0%, rgba(20, 12, 16, 0.8) 100%);
+          border: 1.5px solid rgba(220, 50, 60, 0.25);
+          border-radius: 12px;
+          padding: 14px;
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3), 0 0 15px rgba(220, 50, 60, 0.08);
+          transition: all 0.3s ease;
+        }
+
+        .saleItem:hover {
+          border-color: rgba(255, 80, 90, 0.5);
+          box-shadow: 0 8px 24px rgba(220, 50, 60, 0.25), 0 0 20px rgba(220, 50, 60, 0.12);
+          transform: translateY(-2px);
+          background: linear-gradient(135deg, rgba(35, 20, 25, 0.9) 0%, rgba(28, 16, 22, 0.9) 100%);
+        }
+
+        .saleHeader {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 10px;
+          gap: 10px;
+        }
+
+        .saleDate {
+          font-size: 12px;
+          color: rgba(255, 150, 160, 0.75);
+          font-weight: 600;
+        }
+
+        .saleRevenue {
+          font-size: clamp(16px, 2vw, 20px);
+          font-weight: 900;
+          color: rgba(255, 200, 200, 0.95);
+          text-shadow: 0 2px 6px rgba(220, 50, 60, 0.2);
+        }
+
+        .saleItems {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 13px;
+        }
+
+        .saleItemRow {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          color: rgba(255, 255, 255, 0.75);
+        }
+
+        .saleItemName {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: rgba(255, 180, 190, 0.9);
+          font-weight: 600;
+        }
+
+        .saleItemValue {
+          flex: 0 0 auto;
+          text-align: right;
+          color: rgba(255, 255, 255, 0.85);
+          font-weight: 700;
+        }
+
+        .noData {
+          text-align: center;
+          padding: 30px 20px;
+          color: rgba(255, 255, 255, 0.5);
+          font-size: 14px;
+        }
+
+        .errorBox {
+          background: rgba(50, 20, 20, 0.6);
+          border: 1.5px solid rgba(255, 100, 100, 0.4);
+          border-radius: 12px;
+          padding: 14px;
+          color: rgba(255, 200, 200, 0.9);
+          font-size: 14px;
+          margin-bottom: 16px;
+          box-shadow: 0 4px 12px rgba(220, 50, 60, 0.15);
+        }
+
+        @media (max-width: 768px) {
+          .filterSection {
+            grid-template-columns: repeat(2, 1fr);
+          }
+          .kpiRow {
+            grid-template-columns: repeat(2, 1fr);
+          }
+          .quickBtns {
+            gap: 6px;
+          }
+          .quickBtn {
+            padding: 8px 12px;
+            font-size: 11px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .filterSection {
+            grid-template-columns: 1fr;
+          }
+          .kpiRow {
+            grid-template-columns: 1fr;
+          }
+          .saleHeader {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+          .quickBtns {
+            flex-direction: column;
+          }
+          .quickBtn {
+            width: 100%;
+          }
         }
       `}</style>
 
-      <div className="topRow">
-        <div>
-          <div className="salesTitleWrap">
-            <h1 className="salesTitle">Sales Metrics</h1>
-            <span className="salesBadge">PLATINUM</span>
-          </div>
-
-          <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>
-            Premium performance overview
-          </div>
-
-          <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900, color: "rgba(255,255,255,0.74)" }}>
-            {selectedSellerDisplay}
-            {selectedSellerNickname ? <span style={{ color: "rgba(255,255,255,0.92)" }}> • {selectedSellerNickname}</span> : null}
-            <span className="muted" style={{ fontWeight: 800 }}>
-              {" "}
-              • {timeLabel}
-            </span>
-            <span className="muted" style={{ fontWeight: 800 }}>
-              {" "}
-              • {selectedCatsLabel}
-            </span>
-          </div>
-        </div>
-
-        <div className="controls">
-          <button className="btn btnPop" type="button" onClick={() => setAddOpen(true)}>
-            + Add Salesperson
-          </button>
-
-          <button className="btn" type="button" onClick={() => void loadAll()} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-        </div>
+      <div style={{ marginBottom: 20 }}>
+        <h1 className="smTitle">Sales Metrics</h1>
+        <div className="smSubtitle">Review your sales performance and product breakdown</div>
       </div>
 
-      {err ? (
-        <div className="card" style={{ padding: 12, borderColor: "rgba(255,100,100,0.35)" }}>
-          <b style={{ color: "salmon" }}>Error:</b> <span className="muted">{err}</span>
+      <div className="salesMetricsCard">
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255, 150, 160, 0.8)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            ⚡ Quick Select
+          </div>
+          <div className="quickBtns">
+            <button
+              className={`quickBtn ${timeframe === "current" ? "active" : ""}`}
+              onClick={() => setTimeframe("current")}
+            >
+              Current Month
+            </button>
+            <button
+              className={`quickBtn ${timeframe === "last3" ? "active" : ""}`}
+              onClick={() => setTimeframe("last3")}
+            >
+              Last 3 Months
+            </button>
+            <button
+              className={`quickBtn ${timeframe === "last6" ? "active" : ""}`}
+              onClick={() => setTimeframe("last6")}
+            >
+              Last 6 Months
+            </button>
+            <button
+              className={`quickBtn ${timeframe === "year" ? "active" : ""}`}
+              onClick={() => setTimeframe("year")}
+            >
+              Full Year
+            </button>
+          </div>
         </div>
-      ) : null}
 
-      <div
-        className="card"
-        style={{
-          padding: 12,
-          marginTop: 10,
-          background: "rgba(0,0,0,0.26)",
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: 18,
-          backdropFilter: "blur(12px)",
-        }}
-      >
-        <div style={{ fontWeight: 950, marginBottom: 8 }}>Filters</div>
-
-        <div className="filterRow">
-          <div>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-              Year
-            </div>
-
-            <select className="input" value={year} onChange={(e) => setYear(e.target.value)}>
-              <option value="ALL">All time</option>
-              {yearOptions.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255, 150, 160, 0.8)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            📅 Custom Selection
           </div>
-
-          <div>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-              Month
-            </div>
-
-            <select className="input" value={month} onChange={(e) => setMonth(e.target.value)}>
-              <option value="ALL">All time</option>
-              {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => (
-                <option key={m} value={m}>
-                  {monthName(m)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="full">
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-              Salesperson
-            </div>
-
-            <select className="input" value={seller} onChange={(e) => setSeller(e.target.value)}>
-              <option value="ALL">All Salespeople</option>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.name}>
-                  {displaySellerName(s.name)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* ✅ NEW: Categories multi-select */}
-          <div className="full">
-            <div className="muted" style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
-              Categories (multi-select)
-            </div>
-
-            <div className="catBox">
-              <div className="catRow">
-                <div className="muted" style={{ fontSize: 12, fontWeight: 900 }}>
-                  {catLoading ? "Loading categories…" : catErr ? `Error: ${catErr}` : `${categories.length} categories`}
-                </div>
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => setSelectedCats([])}
-                    disabled={!selectedCats.length}
-                    style={{ height: 38, borderRadius: 14 }}
-                  >
-                    All
-                  </button>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => setSelectedCats(categories)}
-                    disabled={!categories.length || selectedCats.length === categories.length}
-                    style={{ height: 38, borderRadius: 14 }}
-                  >
-                    Select all
-                  </button>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => setSelectedCats([])}
-                    style={{ height: 38, borderRadius: 14 }}
-                  >
-                    Clear
-                  </button>
-                </div>
+          <div className="filterSection">
+            {timeframe === "year" && (
+              <div className="filterField">
+                <label className="filterLabel">Year</label>
+                <select className="filterInput" value={year} onChange={(e) => setYear(e.target.value)}>
+                  {yearOptions.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
               </div>
+            )}
 
-              <div className="catPills">
-                {categories.map((c) => {
-                  const active = selectedCats.some((x) => x.toLowerCase() === c.toLowerCase());
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`catPill ${active ? "active" : ""}`}
-                      onClick={() => {
-                        setSelectedCats((prev) => {
-                          const exists = prev.some((x) => x.toLowerCase() === c.toLowerCase());
-                          if (exists) return prev.filter((x) => x.toLowerCase() !== c.toLowerCase());
-                          return [...prev, c];
-                        });
-                      }}
-                    >
-                      {active ? "✓" : "+"} {c}
-                    </button>
-                  );
-                })}
+            {timeframe === "custom" && (
+              <>
+                <div className="filterField">
+                  <label className="filterLabel">Year</label>
+                  <select className="filterInput" value={year} onChange={(e) => setYear(e.target.value)}>
+                    {yearOptions.map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="filterField">
+                  <label className="filterLabel">Month</label>
+                  <select className="filterInput" value={month} onChange={(e) => setMonth(e.target.value)}>
+                    {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => {
+                      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                      return (
+                        <option key={m} value={m}>
+                          {monthNames[parseInt(m) - 1]}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </>
+            )}
 
-                {!categories.length && !catLoading ? (
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    No categories found. Add some in Inventory → “+ Add Category”.
+            <button
+              className={`quickBtn ${timeframe === "custom" ? "active" : ""}`}
+              onClick={() => setTimeframe("custom")}
+              style={{ gridColumn: "span 1" }}
+            >
+              Select Month
+            </button>
+          </div>
+        </div>
+
+        {err && <div className="errorBox">{err}</div>}
+
+        <div className="kpiRow">
+          <div className="kpiCard">
+            <div className="kpiLabel">💰 Total Revenue</div>
+            <div className="kpiValue">{money(stats.totalRevenue)}</div>
+          </div>
+          <div className="kpiCard">
+            <div className="kpiLabel">📊 Total Sales</div>
+            <div className="kpiValue">{stats.saleCount}</div>
+          </div>
+          <div className="kpiCard">
+            <div className="kpiLabel">📦 Products Sold</div>
+            <div className="kpiValue">{stats.productCount}</div>
+          </div>
+          <div className="kpiCard">
+            <div className="kpiLabel">💸 Fees</div>
+            <div className="kpiValue">{money(stats.totalFees)}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "rgba(255, 180, 190, 0.95)", marginBottom: 12 }}>
+            Sales Breakdown
+          </div>
+
+          {loading ? (
+            <div className="noData">Loading sales data…</div>
+          ) : filteredSalesWithLines.length === 0 ? (
+            <div className="noData">No sales found for this timeframe.</div>
+          ) : (
+            <div className="salesList">
+              {filteredSalesWithLines.map(({ sale, lines }) => {
+                let saleTotal = 0;
+                for (const line of lines) {
+                  saleTotal += toNum(line.price, 0);
+                }
+
+                return (
+                  <div key={sale.id} className="saleItem">
+                    <div className="saleHeader">
+                      <div>
+                        <div className="saleDate">Sale #{sale.id} • {sale.sale_date}</div>
+                        {sale.notes && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>📝 {sale.notes}</div>}
+                      </div>
+                      <div className="saleRevenue">{money(saleTotal)}</div>
+                    </div>
+
+                    <div className="saleItems">
+                      {lines.map((line, idx) => {
+                        const itemName = invNameById.get(line.item_id) ?? "Unknown";
+                        const units = toNum(line.units, 0);
+                        const price = toNum(line.price, 0);
+
+                        return (
+                          <div key={idx} className="saleItemRow">
+                            <span className="saleItemName">{itemName}</span>
+                            <span className="saleItemValue">
+                              {units > 0 ? `${units}x ` : ""}
+                              {money(price)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                ) : null}
-              </div>
+                );
+              })}
             </div>
-          </div>
+          )}
         </div>
       </div>
-
-      <div className="grid">
-        <div className="card cardKpi">
-          <div className="kpiLabel">Sales Count</div>
-          <div className="kpiVal">{metrics.count}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Total Sales</div>
-          <div className="kpiVal">{money(metrics.sumSales)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Total Profit</div>
-          <div className="kpiVal">{money(metrics.sumProfit)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Avg Selling Price / Sale</div>
-          <div className="kpiVal">{money(metrics.avgSellingPricePerSale)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Avg Items / Sale</div>
-          <div className="kpiVal">{metrics.avgItemsPerSale.toFixed(2)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Total Fees</div>
-          <div className="kpiVal">{money(metrics.sumFees)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Avg Profit / Sale</div>
-          <div className="kpiVal">{money(metrics.avgProfitPerSale)}</div>
-        </div>
-
-        <div className="card cardKpi">
-          <div className="kpiLabel">Total Cost (if stored)</div>
-          <div className="kpiVal">{money(metrics.sumCost)}</div>
-        </div>
-      </div>
-
-      <div className="card list">
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-          <div style={{ fontWeight: 950 }}>Recent Sales (filtered)</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            Showing {filteredSales.length}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 8 }}>
-          {filteredSales.slice(0, 40).map((r) => {
-            const ls = linesBySale.get(Number(r.id)) ?? [];
-            let saleTotal = 0;
-            let feeTotal = 0;
-            let costTotal = 0;
-
-            for (const l of ls) {
-              const price = toNum(l.price, 0);
-              const fees = toNum(l.fees, 0);
-              const units = Math.max(0, toNum(l.units, 0));
-              const costEach = invCostById.get(Number(l.item_id)) ?? 0;
-
-              saleTotal += price;
-              feeTotal += fees;
-              costTotal += costEach * units;
-            }
-
-            const p = saleTotal - feeTotal - costTotal;
-            const tone = sellerTone(r.seller_name);
-
-            return (
-              <div key={r.id} className={`saleRow saleGlow ${tone}`}>
-                <div className="left" style={{ minWidth: 0 }}>
-                  <div className="title">
-                    {r.seller_name ? displaySellerName(r.seller_name) : "Sale"}{" "}
-                    <span className="muted" style={{ fontWeight: 900 }}>
-                      • #{r.id}
-                    </span>
-                  </div>
-                  <div className="meta">
-                    {r.sale_date ?? ""}
-                    {r.notes ? ` • ${r.notes}` : ""}
-                  </div>
-                </div>
-                <div className="right">
-                  <div style={{ fontWeight: 950 }}>{money(saleTotal)}</div>
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    Profit: {money(p)}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {!filteredSales.length ? <div className="muted" style={{ padding: 10 }}>No sales found for this filter.</div> : null}
-        </div>
-      </div>
-
-      {addOpen ? (
-        <div className="overlay" onClick={() => setAddOpen(false)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 16 }}>Add Salesperson</h2>
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Saves to <b>{sellerTable}</b>.
-                </div>
-              </div>
-              <button className="btn" type="button" onClick={() => setAddOpen(false)} style={{ height: 46, borderRadius: 16 }}>
-                Close
-              </button>
-            </div>
-
-            <input
-              className="input"
-              value={newSellerName}
-              onChange={(e) => setNewSellerName(e.target.value)}
-              placeholder="Name (ex: Devan, Chad)"
-              autoFocus
-              style={{ marginTop: 12 }}
-            />
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-              <button className="btn primary" type="button" onClick={() => void addSalesperson()} disabled={loading}>
-                {loading ? "Saving…" : "Save Salesperson"}
-              </button>
-              <button className="btn" type="button" onClick={() => setAddOpen(false)} disabled={loading}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

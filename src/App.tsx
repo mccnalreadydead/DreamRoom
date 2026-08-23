@@ -9,8 +9,8 @@ import Sales from "./pages/Sales";
 import Tracking from "./pages/Tracking";
 import CalendarPage from "./pages/CalendarPage";
 import NewProduct from "./pages/NewProduct";
-import Clients from "./pages/Clients";
-import SalesMetrics from "./pages/SalesMetrics"; // ✅ no .tsx
+import SalesMetrics from "./pages/SalesMetrics";
+import ItemSalesByMonth from "./pages/ItemSalesByMonth";
 
 export default function App() {
   return (
@@ -20,9 +20,9 @@ export default function App() {
         <Route path="inventory" element={<Inventory />} />
         <Route path="sales" element={<Sales />} />
         <Route path="sales-metrics" element={<SalesMetrics />} />
+        <Route path="item-sales" element={<ItemSalesByMonth />} />
         <Route path="tracking" element={<Tracking />} />
         <Route path="calendar" element={<CalendarPage />} />
-        <Route path="clients" element={<Clients />} />
         <Route path="new-product" element={<NewProduct />} />
       </Route>
 

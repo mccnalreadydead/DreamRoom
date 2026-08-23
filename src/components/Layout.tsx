@@ -4,12 +4,12 @@ import { Outlet, NavLink } from "react-router-dom";
 const links = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/inventory", label: "Inventory" },
-  { to: "/sales", label: "Sales" },
+  { to: "/sales", label: "Input Sale" },
   { to: "/sales-metrics", label: "Sales Metrics" },
+  { to: "/item-sales", label: "Item % sales" },
   { to: "/tracking", label: "Tracking" },
   { to: "/calendar", label: "Event Calendar" },
-  { to: "/clients", label: "Clients" },
-  { to: "/new-product", label: "Future Products" },
+  { to: "/new-product", label: "Resell Products" },
 ];
 
 export default function Layout() {
