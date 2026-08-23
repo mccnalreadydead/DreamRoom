@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { supabase } from "../supabaseClient";
 
-type Timeframe = "month" | "last3" | "last6" | "last12" | "year";
+type Timeframe = "month" | "last3" | "last6" | "last12" | "year" | "all";
 
 type SaleRow = {
   id: number;
@@ -25,6 +25,13 @@ type InventoryRow = {
 };
 
 type ItemMonthStat = {
+  itemName: string;
+  units: number;
+  revenue: number;
+  share: number;
+};
+
+type ItemPeriodStat = {
   itemName: string;
   units: number;
   revenue: number;
@@ -104,7 +111,7 @@ function rangeForTimeframe(timeframe: Timeframe, selectedYear: string, selectedM
     return Array.from({ length: 12 }, (_, i) => `${selectedYear}-${String(i + 1).padStart(2, "0")}`);
   }
 
-  const count = timeframe === "last3" ? 3 : timeframe === "last6" ? 6 : 12;
+  const count = timeframe === "last3" ? 3 : timeframe === "last6" ? 6 : timeframe === "last12" ? 12 : 1;
   const items: string[] = [];
   let cursor = reference;
 
@@ -147,7 +154,35 @@ export default function ItemSalesByMonth() {
   const [saleLines, setSaleLines] = useState<SaleLineRow[]>([]);
   const [inventory, setInventory] = useState<InventoryRow[]>([]);
 
-  const monthRange = useMemo(() => rangeForTimeframe(timeframe, year, month), [timeframe, year, month]);
+  const monthRange = useMemo(() => {
+    if (timeframe !== "all") {
+      return rangeForTimeframe(timeframe, year, month);
+    }
+
+    const keys = sales
+      .map((s) => monthKeyFromISO(s.sale_date))
+      .filter((k) => Boolean(k))
+      .sort();
+
+    if (!keys.length) {
+      return [`${year}-${month}`];
+    }
+
+    const first = keys[0];
+    const last = keys[keys.length - 1];
+
+    const allMonths: string[] = [];
+    let cursor = first;
+    let guard = 0;
+
+    while (cursor <= last && guard < 1000) {
+      allMonths.push(cursor);
+      cursor = addMonthsToKey(cursor, 1);
+      guard += 1;
+    }
+
+    return allMonths;
+  }, [timeframe, year, month, sales]);
 
   useEffect(() => {
     async function loadData() {
@@ -247,6 +282,28 @@ export default function ItemSalesByMonth() {
     );
   }, [monthStats]);
 
+  const groupedRows = useMemo<ItemPeriodStat[]>(() => {
+    const byItem = new Map<string, { units: number; revenue: number }>();
+
+    for (const row of allRows) {
+      const current = byItem.get(row.itemName) ?? { units: 0, revenue: 0 };
+      current.units += row.units;
+      current.revenue += row.revenue;
+      byItem.set(row.itemName, current);
+    }
+
+    const totalRevenue = allRows.reduce((sum, row) => sum + row.revenue, 0);
+
+    return Array.from(byItem.entries())
+      .map(([itemName, values]) => ({
+        itemName,
+        units: values.units,
+        revenue: values.revenue,
+        share: totalRevenue > 0 ? (values.revenue / totalRevenue) * 100 : 0,
+      }))
+      .sort((a, b) => b.units - a.units || b.revenue - a.revenue);
+  }, [allRows]);
+
   const selectedPeriodTotalRevenue = useMemo(
     () => monthStats.reduce((sum: number, month: MonthStat) => sum + month.totalRevenue, 0),
     [monthStats]
@@ -258,9 +315,11 @@ export default function ItemSalesByMonth() {
   );
 
   const topItem = useMemo(() => {
-    const ranked = allRows.slice().sort((a: { revenue: number }, b: { revenue: number }) => b.revenue - a.revenue);
+    const ranked = groupedRows
+      .slice()
+      .sort((a: { units: number; revenue: number }, b: { units: number; revenue: number }) => b.units - a.units || b.revenue - a.revenue);
     return ranked[0] ?? null;
-  }, [allRows]);
+  }, [groupedRows]);
 
   const topMonth = useMemo(() => {
     if (!monthStats.length) return null;
@@ -272,6 +331,7 @@ export default function ItemSalesByMonth() {
     if (timeframe === "year") return `${year}`;
     if (timeframe === "last3") return `Last 3 months`;
     if (timeframe === "last6") return `Last 6 months`;
+    if (timeframe === "all") return `All time`;
     return `Last 12 months`;
   }, [timeframe, year, month]);
 
@@ -625,6 +685,7 @@ export default function ItemSalesByMonth() {
               <button className={`quickBtn ${timeframe === "last6" ? "active" : ""}`} onClick={() => setTimeframe("last6")}>Last 6</button>
               <button className={`quickBtn ${timeframe === "last12" ? "active" : ""}`} onClick={() => setTimeframe("last12")}>Last 12</button>
               <button className={`quickBtn ${timeframe === "year" ? "active" : ""}`} onClick={() => setTimeframe("year")}>Full year</button>
+              <button className={`quickBtn ${timeframe === "all" ? "active" : ""}`} onClick={() => setTimeframe("all")}>All time</button>
             </div>
           </div>
 
@@ -664,17 +725,16 @@ export default function ItemSalesByMonth() {
           <div className="noData">Loading item sales…</div>
         ) : (
           <div style={{ marginTop: 20 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 900, margin: "0 0 14px", textTransform: "uppercase", letterSpacing: "0.06em", color: "rgba(255, 180, 190, 0.95)" }}>Items sold across selected period</h2>
-            {allRows.length ? (
+            <h2 style={{ fontSize: 16, fontWeight: 900, margin: "0 0 14px", textTransform: "uppercase", letterSpacing: "0.06em", color: "rgba(255, 180, 190, 0.95)" }}>Items sold totals (grouped for selected period)</h2>
+            {groupedRows.length ? (
               <div className="itemsList">
-                {allRows.map((row) => (
-                  <div key={`${row.monthKey}-${row.itemName}`} className="itemCard">
+                {groupedRows.map((row) => (
+                  <div key={row.itemName} className="itemCard">
                     <div className="itemName" title={row.itemName}>{row.itemName}</div>
                     <div className="itemStats">
-                      <div className="itemStat"><label>Month:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.monthLabel}</span></div>
-                      <div className="itemStat"><label>Units:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.units}</span></div>
+                      <div className="itemStat"><label>Units sold:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.units}</span></div>
                       <div className="itemStat"><label>Revenue:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{money(row.revenue)}</span></div>
-                      <div className="itemStat"><label>% of month:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.share.toFixed(1)}%</span></div>
+                      <div className="itemStat"><label>% of period:</label><span style={{ color: "rgba(255, 200, 210, 0.95)", fontWeight: 800 }}>{row.share.toFixed(1)}%</span></div>
                     </div>
                     <div className="percentBar"><div className="percentFill" style={{ width: `${Math.min(row.share, 100)}%` }} /></div>
                   </div>

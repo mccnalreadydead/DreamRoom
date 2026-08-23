@@ -40,7 +40,7 @@ function addMonths(date: Date, months: number): Date {
   return d;
 }
 
-type TimeframeType = "current" | "last3" | "last6" | "year" | "custom";
+type TimeframeType = "current" | "last3" | "last6" | "year" | "custom" | "all";
 
 export default function SalesMetrics() {
   const [sales, setSales] = useState<SaleRow[]>([]);
@@ -118,6 +118,10 @@ export default function SalesMetrics() {
       const startDate = new Date(`${year}-01-01`);
       const endDate = new Date(`${year}-12-31`);
       return { startDate, endDate };
+    } else if (timeframe === "all") {
+      const startDate = new Date("1970-01-01");
+      const endDate = new Date();
+      return { startDate, endDate };
     } else {
       // custom
       const startDate = new Date(`${year}-${month}-01`);
@@ -173,6 +177,34 @@ export default function SalesMetrics() {
       saleCount,
       productCount: products.size,
     };
+  }, [filteredSalesWithLines, invNameById]);
+
+  const groupedItemTotals = useMemo(() => {
+    const byItem = new Map<string, { units: number; revenue: number }>();
+
+    for (const { lines } of filteredSalesWithLines) {
+      for (const line of lines) {
+        const itemName = invNameById.get(line.item_id) ?? "Unknown";
+        const units = Math.max(0, toNum(line.units, 0));
+        const revenue = Math.max(0, toNum(line.price, 0));
+
+        const current = byItem.get(itemName) ?? { units: 0, revenue: 0 };
+        current.units += units;
+        current.revenue += revenue;
+        byItem.set(itemName, current);
+      }
+    }
+
+    const totalRevenue = Array.from(byItem.values()).reduce((sum, item) => sum + item.revenue, 0);
+
+    return Array.from(byItem.entries())
+      .map(([itemName, values]) => ({
+        itemName,
+        units: values.units,
+        revenue: values.revenue,
+        share: totalRevenue > 0 ? (values.revenue / totalRevenue) * 100 : 0,
+      }))
+      .sort((a, b) => b.units - a.units || b.revenue - a.revenue);
   }, [filteredSalesWithLines, invNameById]);
 
   return (
@@ -492,6 +524,12 @@ export default function SalesMetrics() {
             >
               Full Year
             </button>
+            <button
+              className={`quickBtn ${timeframe === "all" ? "active" : ""}`}
+              onClick={() => setTimeframe("all")}
+            >
+              All Time
+            </button>
           </div>
         </div>
 
@@ -570,6 +608,39 @@ export default function SalesMetrics() {
             <div className="kpiLabel">💸 Fees</div>
             <div className="kpiValue">{money(stats.totalFees)}</div>
           </div>
+        </div>
+
+        <div style={{ marginTop: 6, marginBottom: 22 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "rgba(255, 180, 190, 0.95)", marginBottom: 12 }}>
+            Item Totals (Grouped for Selected Timeframe)
+          </div>
+
+          {loading ? (
+            <div className="noData">Loading item totals…</div>
+          ) : groupedItemTotals.length === 0 ? (
+            <div className="noData">No item totals found for this timeframe.</div>
+          ) : (
+            <div className="salesList">
+              {groupedItemTotals.map((item) => (
+                <div key={item.itemName} className="saleItem">
+                  <div className="saleHeader" style={{ marginBottom: 8 }}>
+                    <div className="saleItemName" style={{ fontSize: 14 }}>{item.itemName}</div>
+                    <div className="saleRevenue" style={{ fontSize: 16 }}>{item.units.toLocaleString()} sold</div>
+                  </div>
+                  <div className="saleItems">
+                    <div className="saleItemRow">
+                      <span className="saleItemName">Revenue</span>
+                      <span className="saleItemValue">{money(item.revenue)}</span>
+                    </div>
+                    <div className="saleItemRow">
+                      <span className="saleItemName">Share of period revenue</span>
+                      <span className="saleItemValue">{item.share.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: 24 }}>
