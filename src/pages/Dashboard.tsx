@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
 type RangeKey = "current" | "3" | "6" | "12" | "all";
@@ -7,13 +6,6 @@ type RangeKey = "current" | "3" | "6" | "12" | "all";
 type ProfitRow = {
   dateISO: string;
   profit: number;
-};
-
-type NextEvent = {
-  date: string;
-  title: string;
-  bullets: string[];
-  details: string | null;
 };
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -34,14 +26,6 @@ function labelMonth(d: Date) {
   return `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`;
 }
 
-function todayISO() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 function money(n: number) {
   const v = Number.isFinite(n) ? n : 0;
   return `$${v.toFixed(2)}`;
@@ -52,9 +36,6 @@ export default function Dashboard() {
   const [range, setRange] = useState<RangeKey>("6");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [nextEvent, setNextEvent] = useState<NextEvent | null>(null);
-  const [eventErr, setEventErr] = useState("");
-  const [eventLoading, setEventLoading] = useState(false);
 
   const now = new Date();
 
@@ -135,47 +116,8 @@ export default function Dashboard() {
     }
   }
 
-  async function loadNextEvent() {
-    setEventLoading(true);
-    setEventErr("");
-
-    const { data, error } = await supabase
-      .from("calendar_notes")
-      .select("note_date, bullets, details")
-      .gte("note_date", todayISO())
-      .order("note_date", { ascending: true })
-      .limit(1);
-
-    if (error) {
-      setEventErr(error.message);
-      setNextEvent(null);
-      setEventLoading(false);
-      return;
-    }
-
-    const row: any = (data ?? [])[0];
-    if (!row?.note_date) {
-      setNextEvent(null);
-      setEventLoading(false);
-      return;
-    }
-
-    const bullets: string[] = Array.isArray(row.bullets) ? row.bullets.filter(Boolean).map(String) : [];
-    const details: string | null = row.details != null ? String(row.details) : null;
-
-    setNextEvent({
-      date: String(row.note_date),
-      title: bullets[0] || (details ? details.trim().slice(0, 42) + (details.trim().length > 42 ? "…" : "") : "Event"),
-      bullets,
-      details,
-    });
-
-    setEventLoading(false);
-  }
-
   useEffect(() => {
     loadSales();
-    loadNextEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -313,28 +255,9 @@ export default function Dashboard() {
           })()}</div>
         </div>
 
-        <div className="dash-kpi dash-nextEvent">
-          <div className="dash-kpiLabel">Next event</div>
-          {eventErr ? (
-            <div className="dash-nextText" style={{ color: "salmon" }}>{eventErr}</div>
-          ) : nextEvent ? (
-            <>
-              <div className="dash-kpiValue smallValue">{nextEvent.title}</div>
-              <div className="dash-nextText">{nextEvent.date}</div>
-              <div className="dash-eventActions">
-                <Link to="/calendar" className="btn primary">Calendar</Link>
-                <button className="btn" type="button" onClick={loadNextEvent} disabled={eventLoading}>{eventLoading ? "…" : "↻"}</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="dash-kpiValue smallValue">No upcoming events</div>
-              <div className="dash-nextText">Add one in your calendar</div>
-              <div className="dash-eventActions">
-                <Link to="/calendar" className="btn primary">Add</Link>
-              </div>
-            </>
-          )}
+        <div className="dash-kpi">
+          <div className="dash-kpiLabel">Avg / month</div>
+          <div className="dash-kpiValue">{money(selectedWindowTotal / Math.max(1, monthly.length))}</div>
         </div>
       </div>
 
@@ -342,7 +265,7 @@ export default function Dashboard() {
 
       <div className="dash-card">
         <div className="dash-cardHeader">
-          <h2>Revenue by Month</h2>
+          <h2>Profit by Month</h2>
           <span>{monthWindow.title}</span>
         </div>
 

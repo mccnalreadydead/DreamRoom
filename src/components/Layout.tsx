@@ -8,7 +8,6 @@ const links = [
   { to: "/sales-metrics", label: "Sales Metrics" },
   { to: "/item-sales", label: "Item % sales" },
   { to: "/tracking", label: "Tracking" },
-  { to: "/calendar", label: "Event Calendar" },
   { to: "/new-product", label: "Resell Products" },
 ];
 
