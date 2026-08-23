@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
-type RangeKey = "current" | "6" | "12" | "all";
+type RangeKey = "current" | "3" | "6" | "12" | "all";
 
 type ProfitRow = {
   dateISO: string;
@@ -191,6 +191,7 @@ export default function Dashboard() {
   const monthWindow = useMemo(() => {
     const curStart = startOfMonth(now);
     if (range === "current") return { start: curStart, count: 1, title: "Current Month" };
+    if (range === "3") return { start: addMonths(curStart, -2), count: 3, title: "Last 3 Months" };
     if (range === "6") return { start: addMonths(curStart, -5), count: 6, title: "Last 6 Months" };
     if (range === "12") return { start: addMonths(curStart, -11), count: 12, title: "Last 12 Months" };
 
@@ -234,28 +235,9 @@ export default function Dashboard() {
     return monthly.find((m) => m.key === key)?.total ?? 0;
   }, [monthly, now]);
 
-  const last6Total = useMemo(() => monthly.reduce((sum, item) => sum + item.total, 0), [monthly]);
+  const selectedWindowTotal = useMemo(() => monthly.reduce((sum, item) => sum + item.total, 0), [monthly]);
 
-  const chartMonthly = useMemo(() => {
-    const curStart = startOfMonth(now);
-    const start = addMonths(curStart, -5);
-    const months: { key: string; label: string; total: number }[] = [];
-
-    for (let i = 0; i < 6; i++) {
-      const d = addMonths(start, i);
-      months.push({ key: ymKey(d), label: labelMonth(d), total: 0 });
-    }
-
-    const map = new Map(months.map((m) => [m.key, m]));
-    for (const s of sales) {
-      const d = getDate(s);
-      if (!d) continue;
-      const key = ymKey(startOfMonth(d));
-      if (map.has(key)) map.get(key)!.total += getProfit(s);
-    }
-
-    return months;
-  }, [sales, now]);
+  const chartMonthly = monthly;
 
   const maxBar = Math.max(1, ...chartMonthly.map((m) => m.total));
 
@@ -289,6 +271,7 @@ export default function Dashboard() {
         <div className="dash-tools">
           <select className="dash-select" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
             <option value="current">Current month</option>
+            <option value="3">Last 3 months</option>
             <option value="6">Last 6 months</option>
             <option value="12">Last 12 months</option>
             <option value="all">All time</option>
@@ -306,8 +289,8 @@ export default function Dashboard() {
           <strong>{money(currentMonthProfit)}</strong>
         </div>
         <div className="dash-statCard">
-          <span>Last 6 months</span>
-          <strong>{money(last6Total)}</strong>
+          <span>{monthWindow.title}</span>
+          <strong>{money(selectedWindowTotal)}</strong>
         </div>
       </div>
 
@@ -359,7 +342,7 @@ export default function Dashboard() {
 
       <div className="dash-card">
         <div className="dash-cardHeader">
-          <h2>Revenue</h2>
+          <h2>Revenue by Month</h2>
           <span>{monthWindow.title}</span>
         </div>
 
@@ -651,29 +634,31 @@ export default function Dashboard() {
           border-radius: 14px;
           background: rgba(255,255,255,0.02);
           padding: 12px 8px 8px;
+          overflow-x: auto;
         }
 
         .dash-chart {
           display: flex;
           align-items: flex-end;
-          justify-content: space-around;
+          justify-content: flex-start;
           gap: 10px;
           min-height: 260px;
           padding-top: 8px;
+          width: max-content;
+          min-width: 100%;
         }
 
         .dash-barItem {
-          flex: 1;
+          flex: 0 0 56px;
           display: flex;
           flex-direction: column;
           align-items: center;
           gap: 8px;
-          min-width: 0;
+          min-width: 56px;
         }
 
         .dash-barTrack {
-          width: 100%;
-          max-width: 46px;
+          width: 44px;
           height: 180px;
           display: flex;
           align-items: flex-end;
@@ -722,10 +707,17 @@ export default function Dashboard() {
 
           .dash-chart {
             min-height: 220px;
+            gap: 8px;
           }
 
           .dash-barTrack {
             height: 150px;
+            width: 38px;
+          }
+
+          .dash-barItem {
+            flex-basis: 48px;
+            min-width: 48px;
           }
         }
 
@@ -763,8 +755,18 @@ export default function Dashboard() {
             display: none;
           }
 
+          .dash-chartWrap {
+            padding: 10px 6px 6px;
+          }
+
           .dash-barTrack {
             height: 120px;
+            width: 34px;
+          }
+
+          .dash-barItem {
+            flex-basis: 42px;
+            min-width: 42px;
           }
 
           .dash-barValue {
