@@ -774,7 +774,7 @@ export default function Sales() {
           padding-bottom: 20px;
         }
 
-        /* ✅ EARTH / GREEN ENVIRONMENT BACKDROP (visual only) */
+        /* ✅ HAUNTED EMBER / CINDER BACKDROP (visual only) */
         .salesEarth:before{
           content:"";
           position: fixed;
@@ -782,14 +782,14 @@ export default function Sales() {
           pointer-events:none;
           z-index: 0;
           background:
-            radial-gradient(980px 520px at 12% 10%, rgba(70,255,140,0.18), transparent 60%),
-            radial-gradient(820px 520px at 88% 14%, rgba(40,190,110,0.14), transparent 62%),
+            radial-gradient(980px 520px at 12% 10%, rgba(255,132,58,0.20), transparent 60%),
+            radial-gradient(820px 520px at 88% 14%, rgba(255,82,24,0.16), transparent 62%),
             radial-gradient(900px 620px at 45% 98%, rgba(0,0,0,0.92), transparent 55%),
             linear-gradient(180deg, rgba(0,0,0,0.30), rgba(0,0,0,0.90));
           opacity: .98;
         }
 
-        /* vines + caustic shimmer overlay */
+        /* ash wisps + cursed shimmer overlay */
         .salesEarth:after{
           content:"";
           position: fixed;
@@ -802,15 +802,15 @@ export default function Sales() {
           background:
             repeating-radial-gradient(circle at 18% 12%,
               rgba(255,255,255,0.00) 0 12px,
-              rgba(120,255,170,0.10) 14px,
+              rgba(255,182,120,0.10) 14px,
               rgba(255,255,255,0.00) 26px),
             repeating-radial-gradient(circle at 72% 38%,
-              rgba(0,255,120,0.00) 0 14px,
-              rgba(0,255,120,0.08) 16px,
-              rgba(0,255,120,0.00) 30px),
-            /* vine strands */
-            linear-gradient(115deg, transparent 0%, rgba(70,255,140,0.06) 24%, transparent 44%),
-            linear-gradient(65deg, transparent 0%, rgba(40,190,110,0.05) 22%, transparent 46%);
+              rgba(255,128,32,0.00) 0 14px,
+              rgba(255,128,32,0.08) 16px,
+              rgba(255,128,32,0.00) 30px),
+            /* ember strands */
+            linear-gradient(115deg, transparent 0%, rgba(255,132,58,0.07) 24%, transparent 44%),
+            linear-gradient(65deg, transparent 0%, rgba(255,82,24,0.06) 22%, transparent 46%);
           animation: earthShimmer 6.2s ease-in-out infinite;
         }
 
@@ -842,8 +842,8 @@ export default function Sales() {
           position: relative;
           display: inline-block;
           text-shadow:
-            0 0 18px rgba(70,255,140,0.18),
-            0 0 26px rgba(40,190,110,0.14),
+            0 0 18px rgba(255,132,58,0.18),
+            0 0 26px rgba(255,82,24,0.14),
             0 18px 60px rgba(0,0,0,0.70);
         }
         .salesTitle h1 .titleShimmer{
@@ -855,7 +855,7 @@ export default function Sales() {
             110deg,
             transparent 0%,
             rgba(255,255,255,0.00) 35%,
-            rgba(200,255,220,0.26) 45%,
+            rgba(255,214,168,0.28) 45%,
             rgba(255,255,255,0.06) 55%,
             transparent 70%
           );
@@ -873,7 +873,7 @@ export default function Sales() {
 
         .salesTitle .muted{
           margin-top: 6px;
-          text-shadow: 0 0 18px rgba(70,255,140,0.08);
+          text-shadow: 0 0 18px rgba(255,132,58,0.10);
         }
 
         .salesCard{
@@ -895,8 +895,8 @@ export default function Sales() {
           border-radius: 18px;
           pointer-events:none;
           background:
-            radial-gradient(520px 220px at 20% 0%, rgba(70,255,140,0.12), transparent 60%),
-            radial-gradient(620px 260px at 85% 20%, rgba(40,190,110,0.10), transparent 62%);
+            radial-gradient(520px 220px at 20% 0%, rgba(255,132,58,0.12), transparent 60%),
+            radial-gradient(620px 260px at 85% 20%, rgba(255,82,24,0.10), transparent 62%);
           opacity: 0.75;
           filter: blur(10px);
           animation: cardBreath 6.8s ease-in-out infinite;
@@ -951,11 +951,11 @@ export default function Sales() {
           font-weight: 950;
           padding: 7px 10px;
           border-radius: 999px;
-          border: 1px solid rgba(70,255,140,0.22);
-          background: rgba(70,255,140,0.10);
+          border: 1px solid rgba(255,132,58,0.24);
+          background: rgba(255,132,58,0.10);
           color: rgba(230,255,240,0.92);
           white-space: nowrap;
-          box-shadow: 0 0 0 2px rgba(70,255,140,0.06), 0 0 18px rgba(70,255,140,0.08);
+          box-shadow: 0 0 0 2px rgba(255,132,58,0.06), 0 0 18px rgba(255,132,58,0.10);
         }
 
         .clientRow{
@@ -972,7 +972,7 @@ export default function Sales() {
           font-weight: 900;
           color: rgba(220,255,235,0.72);
           margin-bottom: 6px;
-          text-shadow: 0 0 16px rgba(70,255,140,0.10);
+          text-shadow: 0 0 16px rgba(255,132,58,0.10);
         }
 
         .lineHeader{
@@ -1006,12 +1006,12 @@ export default function Sales() {
           color: rgba(255,255,255,0.9);
           font-weight: 950;
           cursor: pointer;
-          box-shadow: 0 0 0 2px rgba(70,255,140,0.05), 0 0 18px rgba(70,255,140,0.10);
+          box-shadow: 0 0 0 2px rgba(255,132,58,0.05), 0 0 18px rgba(255,132,58,0.10);
           transition: transform .05s ease, border-color .15s ease, box-shadow .15s ease, filter .15s ease;
         }
         .xBtn:hover{
-          border-color: rgba(70,255,140,0.22);
-          box-shadow: 0 0 0 3px rgba(70,255,140,0.08), 0 0 26px rgba(70,255,140,0.14);
+          border-color: rgba(255,132,58,0.24);
+          box-shadow: 0 0 0 3px rgba(255,132,58,0.08), 0 0 26px rgba(255,132,58,0.14);
           filter: brightness(1.12);
         }
         .xBtn:active{ transform: translateY(1px); }
@@ -1020,7 +1020,7 @@ export default function Sales() {
           margin-top: 8px;
           font-size: 12px;
           color: rgba(255,255,255,0.70);
-          text-shadow: 0 0 18px rgba(70,255,140,0.06);
+          text-shadow: 0 0 18px rgba(255,132,58,0.08);
         }
 
         .actionsRow{
@@ -1043,8 +1043,8 @@ export default function Sales() {
 
         /* ✅ Recent Sales glow */
         .recentWrap{
-          border-color: rgba(70,255,140,0.22);
-          box-shadow: 0 18px 60px rgba(0,0,0,0.34), 0 0 34px rgba(70,255,140,0.10);
+          border-color: rgba(255,132,58,0.24);
+          box-shadow: 0 18px 60px rgba(0,0,0,0.34), 0 0 34px rgba(255,132,58,0.12);
         }
 
         /* ✅ CONDENSED + UNIFORM FILTERS (visual only) */
@@ -1070,7 +1070,7 @@ export default function Sales() {
           border-radius: 18px;
           border: 1px solid rgba(255,255,255,0.10);
           background: rgba(0,0,0,0.26);
-          box-shadow: 0 0 26px rgba(70,255,140,0.06);
+          box-shadow: 0 0 26px rgba(255,132,58,0.08);
         }
 
         /* ✅ Added Salesperson column */
@@ -1087,7 +1087,7 @@ export default function Sales() {
           font-weight: 950;
           color: rgba(220,255,235,0.72);
           border-bottom: 1px solid rgba(255,255,255,0.08);
-          text-shadow: 0 0 18px rgba(70,255,140,0.06);
+          text-shadow: 0 0 18px rgba(255,132,58,0.08);
         }
         .salesTableRow{
           border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -1096,14 +1096,14 @@ export default function Sales() {
         .salesTableRow:last-child{ border-bottom: 0; }
 
         .salesTableRow:hover{
-          background: rgba(70,255,140,0.05);
-          box-shadow: inset 0 0 0 1px rgba(70,255,140,0.10);
+          background: rgba(255,132,58,0.06);
+          box-shadow: inset 0 0 0 1px rgba(255,132,58,0.10);
         }
 
         .right{ text-align: right; }
         .bold{
           font-weight: 950;
-          text-shadow: 0 0 14px rgba(70,255,140,0.10);
+          text-shadow: 0 0 14px rgba(255,132,58,0.12);
         }
 
         @media (max-width: 900px){
@@ -1148,17 +1148,17 @@ export default function Sales() {
           transition: box-shadow .15s ease, border-color .15s ease, filter .15s ease;
         }
         .input:focus{
-          border-color: rgba(70,255,140,0.26) !important;
-          box-shadow: 0 0 0 4px rgba(70,255,140,0.10) !important;
+          border-color: rgba(255,132,58,0.28) !important;
+          box-shadow: 0 0 0 4px rgba(255,132,58,0.10) !important;
         }
 
         /* Buttons: green glow pulse */
         .btn{
-          box-shadow: 0 0 0 2px rgba(70,255,140,0.04), 0 0 18px rgba(70,255,140,0.06);
+          box-shadow: 0 0 0 2px rgba(255,132,58,0.04), 0 0 18px rgba(255,132,58,0.08);
           transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease, filter .15s ease;
         }
         .btn:hover{
-          box-shadow: 0 0 0 3px rgba(70,255,140,0.08), 0 0 26px rgba(70,255,140,0.10);
+          box-shadow: 0 0 0 3px rgba(255,132,58,0.08), 0 0 26px rgba(255,132,58,0.12);
           filter: brightness(1.08);
         }
 
@@ -1199,7 +1199,7 @@ export default function Sales() {
 
       <div className="salesCard">
         <div className="topRow">
-          <h2 className="addSaleTitle" style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.10)" }}>
+          <h2 className="addSaleTitle" style={{ margin: 0, textShadow: "0 0 16px rgba(255,132,58,0.12)" }}>
             Add Sale
             <span className="addSaleShimmer" aria-hidden="true" />
           </h2>
@@ -1351,7 +1351,7 @@ export default function Sales() {
 
       <div className="salesCard recentWrap">
         <div className="recentHeader">
-          <h2 style={{ margin: 0, textShadow: "0 0 16px rgba(70,255,140,0.14)" }}>Recent Sales</h2>
+          <h2 style={{ margin: 0, textShadow: "0 0 16px rgba(255,132,58,0.16)" }}>Recent Sales</h2>
 
           <div className="filters">
             <div>

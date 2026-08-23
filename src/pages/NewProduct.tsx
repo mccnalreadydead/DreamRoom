@@ -127,8 +127,8 @@ export default function NewProduct() {
         }
 
         .npM-form textarea:focus{
-          border-color: rgba(120,255,180,0.26) !important;
-          box-shadow: 0 0 0 4px rgba(120,255,180,0.12) !important;
+          border-color: rgba(255,152,84,0.30) !important;
+          box-shadow: 0 0 0 4px rgba(255,152,84,0.12) !important;
           outline: none;
         }
 
@@ -190,7 +190,7 @@ export default function NewProduct() {
         }
         .npEarth > *{ position: relative; z-index: 2; }
 
-        /* deep space + neon mist behind */
+        /* haunted mist + ember aura behind */
         .npEarth::before{
           content:"";
           position: fixed;
@@ -198,9 +198,9 @@ export default function NewProduct() {
           z-index: 0;
           pointer-events:none;
           background:
-            radial-gradient(1200px 680px at 18% 0%, rgba(120,255,180,0.18), transparent 62%),
-            radial-gradient(980px 620px at 86% 18%, rgba(90,200,255,0.14), transparent 64%),
-            radial-gradient(1100px 760px at 55% 115%, rgba(160,90,255,0.12), transparent 62%),
+            radial-gradient(1200px 680px at 18% 0%, rgba(255,152,84,0.20), transparent 62%),
+            radial-gradient(980px 620px at 86% 18%, rgba(255,94,34,0.16), transparent 64%),
+            radial-gradient(1100px 760px at 55% 115%, rgba(132,72,255,0.12), transparent 62%),
             radial-gradient(820px 520px at 52% 42%, rgba(255,255,255,0.06), transparent 60%),
             linear-gradient(180deg, rgba(0,0,0,0.32), rgba(0,0,0,0.90));
           filter: blur(10px) saturate(1.15);
@@ -226,7 +226,7 @@ export default function NewProduct() {
           background:
             radial-gradient(circle, rgba(255,255,255,0.22) 0 1px, transparent 2px),
             radial-gradient(circle, rgba(180,255,210,0.14) 0 1px, transparent 2px),
-            radial-gradient(circle, rgba(160,210,255,0.10) 0 1px, transparent 2px),
+            radial-gradient(circle, rgba(255,182,128,0.10) 0 1px, transparent 2px),
             linear-gradient(180deg, rgba(255,255,255,0.05), transparent 55%, rgba(0,0,0,0.20));
           background-size: 190px 190px, 260px 260px, 320px 320px, 100% 100%;
           background-position: 20% 10%, 70% 35%, 40% 80%, 0 0;
@@ -255,8 +255,8 @@ export default function NewProduct() {
           font-size: clamp(28px, 6.2vw, 40px);
           line-height: 1.05;
           text-shadow:
-            0 0 18px rgba(120,255,180,0.18),
-            0 0 26px rgba(90,200,255,0.12),
+            0 0 18px rgba(255,152,84,0.20),
+            0 0 26px rgba(255,94,34,0.14),
             0 18px 60px rgba(0,0,0,0.70);
         }
         .npTitle .sweep{
@@ -299,8 +299,8 @@ export default function NewProduct() {
           inset:-2px;
           pointer-events:none;
           background:
-            radial-gradient(620px 260px at 18% 0%, rgba(120,255,180,0.16), transparent 60%),
-            radial-gradient(640px 280px at 86% 18%, rgba(90,200,255,0.12), transparent 62%),
+            radial-gradient(620px 260px at 18% 0%, rgba(255,152,84,0.16), transparent 60%),
+            radial-gradient(640px 280px at 86% 18%, rgba(255,94,34,0.12), transparent 62%),
             radial-gradient(520px 240px at 55% 120%, rgba(160,90,255,0.10), transparent 62%),
             linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
           opacity: 0.75;
@@ -316,7 +316,7 @@ export default function NewProduct() {
 
         /* Headings slightly glowing */
         .npEarth h2{
-          text-shadow: 0 0 16px rgba(120,255,180,0.10);
+          text-shadow: 0 0 16px rgba(255,152,84,0.12);
         }
 
         /* Inputs: pop a bit */
@@ -326,8 +326,8 @@ export default function NewProduct() {
           transition: box-shadow .15s ease, border-color .15s ease, filter .15s ease;
         }
         .npEarth .input:focus{
-          border-color: rgba(120,255,180,0.26) !important;
-          box-shadow: 0 0 0 4px rgba(120,255,180,0.12) !important;
+          border-color: rgba(255,152,84,0.30) !important;
+          box-shadow: 0 0 0 4px rgba(255,152,84,0.12) !important;
           filter: brightness(1.06);
         }
 
@@ -335,11 +335,11 @@ export default function NewProduct() {
         .npEarth .btn.primary{
           position: relative;
           overflow: hidden;
-          box-shadow: 0 0 0 2px rgba(120,255,180,0.05), 0 0 26px rgba(120,255,180,0.12);
+          box-shadow: 0 0 0 2px rgba(255,152,84,0.05), 0 0 26px rgba(255,152,84,0.14);
           transition: transform .05s ease, box-shadow .15s ease, filter .15s ease;
         }
         .npEarth .btn.primary:hover{
-          box-shadow: 0 0 0 3px rgba(120,255,180,0.10), 0 0 34px rgba(120,255,180,0.18);
+          box-shadow: 0 0 0 3px rgba(255,152,84,0.10), 0 0 34px rgba(255,152,84,0.20);
           filter: brightness(1.08);
         }
         .npEarth .btn.primary:active{ transform: translateY(1px); }
@@ -472,23 +472,23 @@ export default function NewProduct() {
                     </div>
                     <div style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 10, padding: 10 }}>
                       <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>Resell</div>
-                      <div style={{ fontSize: "clamp(16px, 3vw, 18px)", fontWeight: 700, color: "rgba(120,255,180,0.92)" }}>
+                      <div style={{ fontSize: "clamp(16px, 3vw, 18px)", fontWeight: 700, color: "rgba(255,170,106,0.95)" }}>
                         ${p.resell.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                       </div>
                     </div>
                   </div>
 
                   {/* Margin Highlight */}
-                  <div style={{ backgroundColor: "rgba(120,255,180,0.12)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(120,255,180,0.40)" }}>
+                  <div style={{ backgroundColor: "rgba(255,152,84,0.12)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(255,152,84,0.40)" }}>
                     <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>Your Margin</div>
-                    <div style={{ fontSize: "clamp(18px, 4vw, 22px)", fontWeight: 800, color: "rgba(120,255,180,1)" }}>
+                    <div style={{ fontSize: "clamp(18px, 4vw, 22px)", fontWeight: 800, color: "rgba(255,184,132,1)" }}>
                       ${(p.resell - p.wholesale).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </div>
                   </div>
 
                   {/* Notes */}
                   {p.notes && (
-                    <div style={{ backgroundColor: "rgba(90,200,255,0.10)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(90,200,255,0.35)" }}>
+                    <div style={{ backgroundColor: "rgba(255,94,34,0.10)", borderRadius: 10, padding: 12, marginBottom: 14, borderLeft: "4px solid rgba(255,94,34,0.35)" }}>
                       <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600 }}>📝 Notes</div>
                       <div style={{ fontSize: 13, lineHeight: 1.6, color: "rgba(255,255,255,0.88)", wordBreak: "break-word" }}>
                         {p.notes}

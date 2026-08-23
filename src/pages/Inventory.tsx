@@ -865,7 +865,7 @@ const css = `
 .inv-wrap > *{ position: relative; z-index: 1; }
 
 /* =========================
-   UNDERWATER SHIMMER THEME (VISUAL ONLY)
+  HAUNTED VAULT SHIMMER THEME (VISUAL ONLY)
    ========================= */
 .inv-underwater::before{
   content:"";
@@ -875,9 +875,9 @@ const css = `
   pointer-events:none;
 
   background:
-    radial-gradient(1000px 560px at 18% 0%, rgba(0,210,255,0.18), transparent 62%),
-    radial-gradient(920px 560px at 86% 18%, rgba(140,90,255,0.14), transparent 64%),
-    radial-gradient(980px 640px at 55% 105%, rgba(0,255,200,0.10), transparent 62%),
+    radial-gradient(1000px 560px at 18% 0%, rgba(255,138,66,0.20), transparent 62%),
+    radial-gradient(920px 560px at 86% 18%, rgba(255,86,32,0.15), transparent 64%),
+    radial-gradient(980px 640px at 55% 105%, rgba(148,88,255,0.10), transparent 62%),
     linear-gradient(180deg, rgba(6,10,18,0.60), rgba(0,0,0,0.18));
   filter: blur(10px) saturate(1.25);
   opacity: 0.95;
@@ -902,9 +902,9 @@ const css = `
       rgba(255,255,255,0.10) 12px,
       rgba(255,255,255,0.00) 22px),
     repeating-radial-gradient(circle at 70% 35%,
-      rgba(0,255,255,0.00) 0 12px,
-      rgba(0,255,255,0.08) 14px,
-      rgba(0,255,255,0.00) 26px),
+      rgba(255,140,60,0.00) 0 12px,
+      rgba(255,140,60,0.08) 14px,
+      rgba(255,140,60,0.00) 26px),
 
     radial-gradient(circle at 10% 120%, rgba(255,255,255,0.22) 0 2px, rgba(255,255,255,0.10) 7px, transparent 16px),
     radial-gradient(circle at 26% 135%, rgba(255,255,255,0.18) 0 2px, rgba(255,255,255,0.08) 8px, transparent 18px),
@@ -913,7 +913,7 @@ const css = `
     radial-gradient(circle at 78% 132%, rgba(255,255,255,0.16) 0 2px, rgba(255,255,255,0.07) 8px, transparent 18px),
     radial-gradient(circle at 90% 145%, rgba(255,255,255,0.18) 0 2px, rgba(255,255,255,0.08) 8px, transparent 18px),
 
-    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 55%, rgba(0,210,255,0.04));
+    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 55%, rgba(255,138,66,0.06));
 
   background-size:
     520px 520px,
@@ -1009,8 +1009,8 @@ const css = `
   font-weight: 950;
 
   text-shadow:
-    0 0 18px rgba(0,210,255,.16),
-    0 0 26px rgba(140,90,255,.14),
+    0 0 18px rgba(255,138,66,.16),
+    0 0 26px rgba(148,88,255,.14),
     0 16px 55px rgba(0,0,0,.75);
 }
 
@@ -1044,9 +1044,9 @@ const css = `
   align-items:center;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(0,210,255,.22);
-  background: rgba(0,210,255,.06);
-  color: rgba(200,245,255,.92);
+  border: 1px solid rgba(255,138,66,.24);
+  background: rgba(255,138,66,.08);
+  color: rgba(255,214,184,.94);
   font-size: 13px;
   max-width: 100%;
   overflow:hidden;
@@ -1058,16 +1058,16 @@ const css = `
   position: relative;
   box-shadow:
     0 0 0 2px rgba(255,255,255,0.03),
-    0 0 18px rgba(0,210,255,0.12),
+    0 0 18px rgba(255,138,66,0.14),
     0 16px 40px rgba(0,0,0,0.25);
 }
 .inv-pillAlt{
-  border-color: rgba(140,90,255,.24);
-  background: rgba(140,90,255,.06);
+  border-color: rgba(148,88,255,.24);
+  background: rgba(148,88,255,.06);
   color: rgba(235,225,255,.92);
   box-shadow:
     0 0 0 2px rgba(255,255,255,0.03),
-    0 0 18px rgba(140,90,255,0.12),
+    0 0 18px rgba(148,88,255,0.12),
     0 16px 40px rgba(0,0,0,0.25);
 }
 .pillShimmer{
@@ -1120,18 +1120,18 @@ const css = `
 
 .btnGlow{
   box-shadow:
-    0 0 0 2px rgba(0,210,255,0.10),
+    0 0 0 2px rgba(255,138,66,0.10),
     0 14px 40px rgba(0,0,0,0.40),
-    0 0 22px rgba(0,210,255,0.18);
+    0 0 22px rgba(255,138,66,0.18);
   animation: btnGlowPulse 1.55s ease-in-out infinite;
-  border-color: rgba(0,210,255,0.30);
+  border-color: rgba(255,138,66,0.30);
 }
 .btnGlow:hover{
   filter: brightness(1.14) saturate(1.2);
   box-shadow:
-    0 0 0 2px rgba(0,210,255,0.14),
+    0 0 0 2px rgba(255,138,66,0.14),
     0 18px 52px rgba(0,0,0,0.45),
-    0 0 30px rgba(0,210,255,0.22);
+    0 0 30px rgba(255,138,66,0.22);
 }
 .btnGlowSoft{
   box-shadow:
@@ -1162,7 +1162,7 @@ const css = `
 /* Tabs */
 .inv-tabs{ display:flex; gap:10px; margin: 8px 0 14px; flex-wrap: wrap; }
 .tab{ padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); color: rgba(255,255,255,.86); cursor:pointer; font-weight: 700; }
-.tab.active{ border-color: rgba(0,210,255,.28); background: rgba(0,210,255,.07); color: rgba(200,245,255,.96); box-shadow: 0 0 0 3px rgba(0,210,255,0.06); }
+.tab.active{ border-color: rgba(255,138,66,.28); background: rgba(255,138,66,.08); color: rgba(255,214,184,.96); box-shadow: 0 0 0 3px rgba(255,138,66,0.08); }
 
 /* Category tabs row */
 .inv-catTabs{
@@ -1182,10 +1182,10 @@ const css = `
   font-weight: 850;
 }
 .catTab.active{
-  border-color: rgba(0,210,255,.28);
-  background: rgba(0,210,255,.07);
-  color: rgba(200,245,255,.96);
-  box-shadow: 0 0 0 3px rgba(0,210,255,0.06);
+  border-color: rgba(255,138,66,.28);
+  background: rgba(255,138,66,.08);
+  color: rgba(255,214,184,.96);
+  box-shadow: 0 0 0 3px rgba(255,138,66,0.08);
 }
 .catMeta{
   font-size: 12px;
@@ -1214,10 +1214,10 @@ const css = `
   align-items:center;
   gap: 8px;
   border-radius: 14px;
-  border: 1px solid rgba(0,210,255,0.18);
+  border: 1px solid rgba(255,138,66,0.20);
   background: rgba(255,255,255,0.03);
   box-shadow:
-    0 0 0 2px rgba(0,210,255,0.06),
+    0 0 0 2px rgba(255,138,66,0.06),
     0 14px 42px rgba(0,0,0,0.32);
   padding: 8px 10px;
 }
@@ -1225,7 +1225,7 @@ const css = `
   opacity: 0.75;
   font-weight: 900;
   transform: translateY(-1px);
-  text-shadow: 0 0 12px rgba(0,210,255,0.18);
+  text-shadow: 0 0 12px rgba(255,138,66,0.20);
 }
 .inp.search{
   border: none;
@@ -1242,11 +1242,11 @@ const css = `
   border-radius: 12px;
   box-shadow:
     0 0 0 2px rgba(255,255,255,0.05),
-    0 0 18px rgba(0,210,255,0.10);
+    0 0 18px rgba(255,138,66,0.12);
 }
 
 /* Card + table */
-.inv-card{ border-radius: 18px; border: 1px solid rgba(0,210,255,.16); background: rgba(10,10,12,.55); overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  .inv-card{ border-radius: 18px; border: 1px solid rgba(255,138,66,.18); background: rgba(10,10,12,.55); overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
 .inv-tableHead{
   display:grid;
   grid-template-columns: 1.4fr .5fr .6fr .6fr .5fr .7fr;
@@ -1277,12 +1277,12 @@ const css = `
 
 .nameGlow{
   text-shadow:
-    0 0 14px rgba(0,210,255,0.12),
-    0 0 18px rgba(140,90,255,0.10);
+    0 0 14px rgba(255,138,66,0.12),
+    0 0 18px rgba(148,88,255,0.10);
 }
 
 .inp{ width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.03); color: rgba(255,255,255,.92); outline: none; }
-.inp:focus{ border-color: rgba(0,210,255, .35); box-shadow: 0 0 0 4px rgba(0,210,255, .10); }
+.inp:focus{ border-color: rgba(255,138,66, .35); box-shadow: 0 0 0 4px rgba(255,138,66, .10); }
 .inp.danger{ border-color: rgba(255, 90, 90, .55); box-shadow: 0 0 0 4px rgba(255, 90, 90, .10); }
 
 /* Category select: black bg + white text */
@@ -1292,8 +1292,8 @@ const css = `
   border-color: rgba(255,255,255,.16) !important;
 }
 .catSelect:focus{
-  border-color: rgba(0,210,255, .35) !important;
-  box-shadow: 0 0 0 4px rgba(0,210,255, .10) !important;
+  border-color: rgba(255,138,66, .35) !important;
+  box-shadow: 0 0 0 4px rgba(255,138,66, .10) !important;
 }
 .catSelect option{
   background: #000;
@@ -1301,7 +1301,7 @@ const css = `
 }
 
 .badge{ display:inline-flex; align-items:center; justify-content:center; padding: 6px 10px; border-radius: 999px; font-weight: 800; font-size: 12px; width: fit-content; }
-.badge.ok{ border: 1px solid rgba(0,210,255,.22); background: rgba(0,210,255,.06); color: rgba(200,245,255,.92); }
+.badge.ok{ border: 1px solid rgba(255,138,66,.24); background: rgba(255,138,66,.08); color: rgba(255,214,184,.94); }
 .badge.low{ border: 1px solid rgba(255, 90, 90, .35); background: rgba(255, 60, 60, .10); color: rgba(255, 170, 170, .95); }
 
 .saving{ font-size: 12px; color: rgba(255,255,255,.55); }

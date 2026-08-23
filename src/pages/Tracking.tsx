@@ -108,9 +108,9 @@ export default function Tracking() {
   return (
     <div className="page trackingSun">
       <style>{`
-        /* =========================
-           SUNSHINE / INVITING THEME (visual only)
-           ========================= */
+          /* =========================
+            HAUNTED LANTERN / GRAVEYARD THEME (visual only)
+            ========================= */
         .trackingSun{
           position: relative;
           isolation: isolate;
@@ -123,14 +123,14 @@ export default function Tracking() {
           pointer-events:none;
           z-index: 0;
           background:
-            radial-gradient(980px 520px at 18% 8%, rgba(255,220,120,0.22), transparent 60%),
-            radial-gradient(760px 520px at 92% 16%, rgba(255,170,60,0.16), transparent 62%),
+            radial-gradient(980px 520px at 18% 8%, rgba(255,150,70,0.20), transparent 60%),
+            radial-gradient(760px 520px at 92% 16%, rgba(255,94,34,0.16), transparent 62%),
             radial-gradient(820px 620px at 45% 96%, rgba(0,0,0,0.90), transparent 55%),
             linear-gradient(180deg, rgba(0,0,0,0.20), rgba(0,0,0,0.88));
           opacity: .98;
         }
 
-        /* sun rays + shimmer */
+        /* lantern rays + ember shimmer */
         .trackingSun:after{
           content:"";
           position: fixed;
@@ -143,15 +143,15 @@ export default function Tracking() {
           background:
             conic-gradient(from 210deg at 18% 10%,
               rgba(255,255,255,0.00) 0deg,
-              rgba(255,230,140,0.08) 14deg,
+              rgba(255,190,120,0.08) 14deg,
               rgba(255,255,255,0.00) 34deg,
-              rgba(255,190,90,0.06) 52deg,
+              rgba(255,120,58,0.06) 52deg,
               rgba(255,255,255,0.00) 76deg,
-              rgba(255,230,140,0.07) 94deg,
+              rgba(255,170,104,0.07) 94deg,
               rgba(255,255,255,0.00) 120deg),
             repeating-radial-gradient(circle at 24% 14%,
               rgba(255,255,255,0.00) 0 14px,
-              rgba(255,220,120,0.10) 16px,
+              rgba(255,150,70,0.10) 16px,
               rgba(255,255,255,0.00) 30px);
           animation: sunShimmer 6.2s ease-in-out infinite;
         }
@@ -171,8 +171,8 @@ export default function Tracking() {
           font-weight: 950;
           letter-spacing: .3px;
           text-shadow:
-            0 0 18px rgba(255,220,120,0.20),
-            0 0 28px rgba(255,170,60,0.14),
+            0 0 18px rgba(255,150,70,0.20),
+            0 0 28px rgba(255,94,34,0.14),
             0 18px 60px rgba(0,0,0,0.70);
         }
         .trackTitle .titleSweep{
@@ -201,10 +201,10 @@ export default function Tracking() {
 
         /* Cards: warmer glow */
         .trackingSun .card{
-          border: 1px solid rgba(255,220,120,0.18);
+          border: 1px solid rgba(255,150,70,0.18);
           background: rgba(0,0,0,0.34);
           backdrop-filter: blur(12px);
-          box-shadow: 0 18px 55px rgba(0,0,0,0.32), 0 0 28px rgba(255,220,120,0.06);
+          box-shadow: 0 18px 55px rgba(0,0,0,0.32), 0 0 28px rgba(255,150,70,0.08);
           position: relative;
           overflow: hidden;
         }
@@ -215,8 +215,8 @@ export default function Tracking() {
           pointer-events:none;
           border-radius: inherit;
           background:
-            radial-gradient(520px 220px at 20% 0%, rgba(255,220,120,0.12), transparent 60%),
-            radial-gradient(620px 260px at 85% 20%, rgba(255,170,60,0.10), transparent 62%);
+            radial-gradient(520px 220px at 20% 0%, rgba(255,150,70,0.12), transparent 60%),
+            radial-gradient(620px 260px at 85% 20%, rgba(255,94,34,0.10), transparent 62%);
           opacity: 0.75;
           filter: blur(10px);
           animation: cardBreath 6.8s ease-in-out infinite;
@@ -230,7 +230,7 @@ export default function Tracking() {
 
         /* Make headings subtly glow */
         .trackingSun h2{
-          text-shadow: 0 0 16px rgba(255,220,120,0.10);
+          text-shadow: 0 0 16px rgba(255,150,70,0.12);
         }
 
         /* Inputs: sunshine focus glow (visual only) */
@@ -240,19 +240,19 @@ export default function Tracking() {
           box-sizing: border-box;
         }
         .trackingSun .input:focus{
-          border-color: rgba(255,220,120,0.28) !important;
-          box-shadow: 0 0 0 4px rgba(255,220,120,0.12) !important;
+          border-color: rgba(255,150,70,0.28) !important;
+          box-shadow: 0 0 0 4px rgba(255,150,70,0.12) !important;
         }
 
         /* Save button: glow + shimmer */
         .trackingSun .btn.primary{
           position: relative;
-          box-shadow: 0 0 0 2px rgba(255,220,120,0.05), 0 0 22px rgba(255,220,120,0.10);
+          box-shadow: 0 0 0 2px rgba(255,150,70,0.05), 0 0 22px rgba(255,150,70,0.10);
           transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease, filter .15s ease;
           overflow: hidden;
         }
         .trackingSun .btn.primary:hover{
-          box-shadow: 0 0 0 3px rgba(255,220,120,0.10), 0 0 30px rgba(255,220,120,0.16);
+          box-shadow: 0 0 0 3px rgba(255,150,70,0.10), 0 0 30px rgba(255,150,70,0.16);
           filter: brightness(1.08);
         }
         .trackingSun .btn.primary:active{ transform: translateY(1px); }

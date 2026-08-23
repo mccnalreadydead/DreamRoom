@@ -227,9 +227,9 @@ export default function SalesMetrics() {
       <style>{`
         .salesMetricsCard {
           background: linear-gradient(135deg, rgba(20, 14, 16, 0.85) 0%, rgba(25, 16, 20, 0.85) 100%);
-          border: 1px solid rgba(220, 50, 60, 0.25);
+          border: 1px solid rgba(255, 143, 42, 0.28);
           border-radius: 14px;
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), 0 0 30px rgba(220, 50, 60, 0.12);
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), 0 0 30px rgba(255, 143, 42, 0.14);
           padding: 18px;
           backdrop-filter: blur(12px);
         }
@@ -238,7 +238,7 @@ export default function SalesMetrics() {
           font-size: clamp(32px, 6vw, 44px);
           font-weight: 900;
           margin: 0 0 8px 0;
-          background: linear-gradient(135deg, #ff5555 0%, #cc3333 100%);
+          background: linear-gradient(135deg, #ff8f2a 0%, #ff5e00 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
@@ -260,16 +260,16 @@ export default function SalesMetrics() {
 
         .kpiCard {
           background: linear-gradient(135deg, rgba(35, 20, 23, 0.7) 0%, rgba(28, 16, 20, 0.7) 100%);
-          border: 1px solid rgba(220, 50, 60, 0.2);
+          border: 1px solid rgba(255, 143, 42, 0.26);
           border-radius: 12px;
           padding: 14px;
-          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), 0 0 20px rgba(220, 50, 60, 0.1);
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), 0 0 20px rgba(255, 143, 42, 0.12);
           transition: all 0.3s ease;
         }
 
         .kpiCard:hover {
-          border-color: rgba(220, 80, 90, 0.4);
-          box-shadow: 0 10px 28px rgba(220, 50, 60, 0.2), 0 0 30px rgba(220, 50, 60, 0.12);
+          border-color: rgba(255, 176, 94, 0.55);
+          box-shadow: 0 10px 28px rgba(255, 143, 42, 0.2), 0 0 30px rgba(255, 143, 42, 0.12);
           transform: translateY(-2px);
         }
 
@@ -299,7 +299,7 @@ export default function SalesMetrics() {
         .quickBtn {
           padding: 10px 14px;
           border-radius: 10px;
-          border: 1.5px solid rgba(220, 50, 60, 0.3);
+          border: 1.5px solid rgba(255, 143, 42, 0.34);
           background: rgba(30, 20, 22, 0.6);
           color: rgba(255, 255, 255, 0.85);
           cursor: pointer;
@@ -313,17 +313,17 @@ export default function SalesMetrics() {
         }
 
         .quickBtn:hover {
-          border-color: rgba(220, 80, 90, 0.6);
-          background: rgba(50, 25, 28, 0.8);
-          box-shadow: 0 6px 14px rgba(220, 50, 60, 0.2);
+          border-color: rgba(255, 176, 94, 0.68);
+          background: rgba(44, 24, 10, 0.82);
+          box-shadow: 0 6px 14px rgba(255, 143, 42, 0.2);
           transform: translateY(-2px);
         }
 
         .quickBtn.active {
-          border-color: rgba(255, 80, 90, 0.8);
-          background: linear-gradient(135deg, rgba(220, 50, 60, 0.4) 0%, rgba(180, 30, 40, 0.4) 100%);
-          color: rgba(255, 200, 200, 1);
-          box-shadow: 0 6px 16px rgba(220, 50, 60, 0.3);
+          border-color: rgba(255, 182, 102, 0.88);
+          background: linear-gradient(135deg, rgba(255, 143, 42, 0.42) 0%, rgba(255, 94, 0, 0.42) 100%);
+          color: rgba(255, 227, 192, 1);
+          box-shadow: 0 6px 16px rgba(255, 143, 42, 0.3);
           font-weight: 800;
         }
 

@@ -188,7 +188,7 @@ export default function Dashboard() {
       <g>
         <circle cx="60" cy="28" r="15" fill="#0f0f10" />
         <path d="M 72 24 L 92 22 L 77 31 Z" fill="#1b1b1d" />
-        <circle cx="66" cy="24" r="4" fill="#ff5555" />
+        <circle cx="66" cy="24" r="4" fill="#ff8f2a" />
         <circle cx="67" cy="23" r="1.5" fill="#ffd166" />
         <ellipse cx="60" cy="50" rx="16" ry="20" fill="#0f0f10" />
         <path d="M 47 34 Q 26 26 12 39 Q 24 46 38 42 Q 42 40 47 34" fill="#0f0f10" />
@@ -302,16 +302,16 @@ export default function Dashboard() {
 
       <style>{`
         :root {
-          --red-1: #ff5555;
-          --red-2: #cc3333;
-          --red-3: #ff7a7a;
+          --red-1: #ff8f2a;
+          --red-2: #ff5e00;
+          --red-3: #ffb35f;
           --black-1: #08090b;
           --black-2: #111214;
           --black-3: #19191d;
-          --amber: #ffb347;
+          --amber: #ffd3a0;
           --text: rgba(255,255,255,0.96);
           --muted: rgba(255,255,255,0.72);
-          --line: rgba(255, 85, 85, 0.18);
+          --line: rgba(255, 143, 42, 0.24);
         }
 
         * { box-sizing: border-box; }
@@ -324,9 +324,10 @@ export default function Dashboard() {
           min-height: 100vh;
           padding: 16px;
           background:
-            radial-gradient(circle at top left, rgba(255,85,85,0.18), transparent 26%),
-            radial-gradient(circle at top right, rgba(255,180,71,0.08), transparent 24%),
-            linear-gradient(180deg, #08090b 0%, #120d12 100%);
+            radial-gradient(circle at top left, rgba(255,143,42,0.22), transparent 26%),
+            radial-gradient(circle at top right, rgba(255,180,71,0.10), transparent 24%),
+            radial-gradient(circle at 50% 100%, rgba(255,94,0,0.10), transparent 30%),
+            linear-gradient(180deg, #070708 0%, #130c07 100%);
           color: var(--text);
         }
 

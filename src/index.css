@@ -1,7 +1,7 @@
 /* =========================================================
-   Already Dead Inventory App - Global Styles
-   Elegant Black + Gold (lightweight, fast)
-   ========================================================= */
+  Dream Room - Haunted Theme
+  Black + Ember Orange
+  ========================================================= */
 
 :root {
   /* typography */
@@ -14,8 +14,8 @@
   --ad-bg0: #060608;
   --ad-bg1: #0a0a10;
 
-  --ad-gold: #d4af37;
-  --ad-gold-soft: rgba(212, 175, 55, 0.22);
+  --ad-gold: #ff8f2a;
+  --ad-gold-soft: rgba(255, 143, 42, 0.22);
 
   --ad-text: rgba(255, 255, 255, 0.92);
   --ad-muted: rgba(255, 255, 255, 0.68);
@@ -42,8 +42,9 @@ body {
   color: var(--ad-text);
 
   background:
-    radial-gradient(1200px 700px at 20% 0%, rgba(212,175,55,0.12), transparent 55%),
-    radial-gradient(900px 600px at 80% 20%, rgba(212,175,55,0.08), transparent 55%),
+    radial-gradient(1200px 700px at 20% 0%, rgba(255,143,42,0.16), transparent 55%),
+    radial-gradient(900px 600px at 80% 20%, rgba(255,143,42,0.10), transparent 55%),
+    radial-gradient(900px 520px at 50% 100%, rgba(255,90,0,0.10), transparent 58%),
     linear-gradient(180deg, var(--ad-bg0), var(--ad-bg1));
 }
 
@@ -56,8 +57,8 @@ body::before {
   background:
     repeating-linear-gradient(
       135deg,
-      rgba(212,175,55,0.06) 0px,
-      rgba(212,175,55,0.06) 1px,
+      rgba(255,143,42,0.06) 0px,
+      rgba(255,143,42,0.06) 1px,
       transparent 1px,
       transparent 18px
     );

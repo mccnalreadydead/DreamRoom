@@ -54,11 +54,11 @@ export default function Layout() {
           align-items: center;
           padding: 10px;
           border-radius: 18px;
-          border: 1px solid rgba(120,160,255,0.14);
-          background: rgba(0,0,0,0.30);
+          border: 1px solid rgba(255,143,42,0.20);
+          background: linear-gradient(180deg, rgba(0,0,0,0.42), rgba(16,10,6,0.44));
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
-          box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+          box-shadow: 0 18px 60px rgba(0,0,0,0.45), 0 0 28px rgba(255,143,42,0.12);
         }
 
         .topNav a {
@@ -75,19 +75,19 @@ export default function Layout() {
           letter-spacing: .2px;
 
           color: rgba(255,255,255,0.90);
-          border: 1px solid rgba(120,160,255,0.14);
-          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,143,42,0.22);
+          background: rgba(255,255,255,0.02);
         }
 
         .topNav a:hover{
-          border-color: rgba(152,90,255,0.35);
-          background: rgba(152,90,255,0.10);
+          border-color: rgba(255,168,84,0.55);
+          background: rgba(255,143,42,0.14);
         }
 
         .topNav a.active {
-          border-color: rgba(152,90,255,0.55);
-          background: linear-gradient(180deg, rgba(152,90,255,0.24), rgba(255,255,255,0.03));
-          box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+          border-color: rgba(255,168,84,0.72);
+          background: linear-gradient(180deg, rgba(255,143,42,0.30), rgba(255,255,255,0.03));
+          box-shadow: 0 18px 50px rgba(0,0,0,0.35), 0 0 18px rgba(255,143,42,0.30);
         }
 
         /* Page container spacing */
