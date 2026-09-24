@@ -11,7 +11,7 @@ import {
   PILLAR_ANCHOR_TEXT,
   FOLLOWTHROUGH_ANCHOR_TEXT,
 } from "../../growth/lib/constants";
-import { toDateKey, weekStartMonday } from "../../growth/lib/scoring";
+import { toDateKey, weekStartMonday, colorFor } from "../../growth/lib/scoring";
 import {
   deleteCheckIn,
   fetchCheckInForWeek,
@@ -396,20 +396,7 @@ export default function CheckIn() {
                 value={draft[SCORE_KEY[pillar.key]] as number | null}
                 onChange={(v) => update({ [SCORE_KEY[pillar.key]]: v } as Partial<Draft>)}
               />
-              {pillar.key === "physical" ? (
-                <>
-                  <textarea
-                    className="growthTextarea"
-                    placeholder="Body pain note (optional — saved permanently)"
-                    value={draft.painNote}
-                    maxLength={PAIN_NOTE_MAX_LEN}
-                    onChange={(e) => update({ painNote: e.target.value })}
-                  />
-                  <div className="growthCharCount">
-                    {draft.painNote.length}/{PAIN_NOTE_MAX_LEN}
-                  </div>
-                </>
-              ) : (
+              {pillar.key !== "physical" && (
                 <textarea
                   className="growthTextarea"
                   placeholder={`Notes on ${pillar.label.toLowerCase()} (for your reflection — not saved)`}
@@ -419,6 +406,21 @@ export default function CheckIn() {
               )}
             </section>
           ))}
+
+          <section className="growthCard">
+            <h2 className="growthSectionTitle">Body pain</h2>
+            <div className="growthMuted">Any pain or discomfort this week? Saved permanently.</div>
+            <textarea
+              className="growthTextarea"
+              placeholder="e.g. lower back has been tight since Tuesday"
+              value={draft.painNote}
+              maxLength={PAIN_NOTE_MAX_LEN}
+              onChange={(e) => update({ painNote: e.target.value })}
+            />
+            <div className="growthCharCount">
+              {draft.painNote.length}/{PAIN_NOTE_MAX_LEN}
+            </div>
+          </section>
 
           <section className="growthCard">
             <h2 className="growthSectionTitle">Proud of</h2>
@@ -507,17 +509,26 @@ function ScoreSlider({
 }) {
   return (
     <div className="growthScoreSlider">
-      {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-        <button
-          key={n}
-          type="button"
-          className={`growthScoreDot${value === n ? " active" : ""}`}
-          onClick={() => onChange(n)}
-          aria-label={`Score ${n}`}
-        >
-          {n}
-        </button>
-      ))}
+      {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => {
+        const color = colorFor(n * 10);
+        const active = value === n;
+        return (
+          <button
+            key={n}
+            type="button"
+            className={`growthScoreDot${active ? " active" : ""}`}
+            style={
+              active
+                ? { borderColor: color, background: color, color: "#1a1200", boxShadow: `0 0 14px ${color}` }
+                : { borderColor: color, color }
+            }
+            onClick={() => onChange(n)}
+            aria-label={`Score ${n}`}
+          >
+            {n}
+          </button>
+        );
+      })}
     </div>
   );
 }

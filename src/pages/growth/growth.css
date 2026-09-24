@@ -362,6 +362,10 @@
   border-radius: 16px;
   padding: 12px;
 }
+.growthPillarCardFocus {
+  border-color: rgba(255, 91, 91, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 91, 91, 0.35), 0 10px 24px rgba(255, 91, 91, 0.15);
+}
 .growthPillarCardHead {
   display: flex;
   align-items: flex-start;
@@ -371,6 +375,20 @@
 .growthPillarLabel {
   font-weight: 800;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.growthFocusBadge {
+  font-size: 10px;
+  font-weight: 800;
+  color: #ff5b5b;
+  border: 1px solid rgba(255, 91, 91, 0.5);
+  background: rgba(255, 91, 91, 0.12);
+  border-radius: 999px;
+  padding: 1px 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 .growthPillarDesc {
   color: rgba(255, 255, 255, 0.55);

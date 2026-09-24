@@ -7,18 +7,22 @@ type Props = {
   pillar: PillarDef;
   avgScore: number | null; // 1-10 average for the selected window
   prevAvgScore?: number | null; // 1-10 average for the previous equal window
+  isFocus?: boolean; // highlight as the current "focus area"
   sparklinePoints: TrendPoint[]; // weekly 1-10 values, scaled x10 by caller for color bands
 };
 
-export default function PillarCard({ pillar, avgScore, prevAvgScore = null, sparklinePoints }: Props) {
+export default function PillarCard({ pillar, avgScore, prevAvgScore = null, isFocus = false, sparklinePoints }: Props) {
   const scaledAvg = avgScore == null ? null : avgScore * 10;
   const trend = trendDirection(avgScore, prevAvgScore);
 
   return (
-    <div className="growthPillarCard">
+    <div className={`growthPillarCard${isFocus ? " growthPillarCardFocus" : ""}`}>
       <div className="growthPillarCardHead">
         <div>
-          <div className="growthPillarLabel">{pillar.label}</div>
+          <div className="growthPillarLabel">
+            {pillar.label}
+            {isFocus && <span className="growthFocusBadge">Focus</span>}
+          </div>
           <div className="growthPillarDesc">{pillar.description}</div>
         </div>
         <div className="growthPillarCardScoreCol">

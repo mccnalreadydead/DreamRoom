@@ -312,6 +312,18 @@ export default function Pillars() {
     }
   }
 
+  const sortedPillars = useMemo(() => {
+    // Worst-scoring pillars first, so your weakest areas surface at the top.
+    return [...GROWTH_PILLARS].sort((a, b) => {
+      const av = pillarAverages.current[a.key];
+      const bv = pillarAverages.current[b.key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return av - bv;
+    });
+  }, [pillarAverages]);
+
   return (
     <div className="growthPage">
       <div className="growthHeaderRow">
@@ -396,12 +408,13 @@ export default function Pillars() {
       )}
 
       <div className="growthPillarGrid">
-        {GROWTH_PILLARS.map((p) => (
+        {sortedPillars.map((p) => (
           <PillarCard
             key={p.key}
             pillar={p}
             avgScore={pillarAverages.current[p.key]}
             prevAvgScore={pillarAverages.previous[p.key]}
+            isFocus={focusArea?.label === p.label}
             sparklinePoints={
               activeSeries?.rows.map((r) => ({ x: r.week_start, value: r[p.scoreColumn] })) ?? []
             }
