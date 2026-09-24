@@ -118,6 +118,12 @@ export async function upsertCheckIn(input: CheckInUpsertInput): Promise<GrowthCh
   return data as GrowthCheckIn;
 }
 
+/** Deletes a check-in and (via FK cascade) its goals. Cannot be undone. */
+export async function deleteCheckIn(checkInId: string): Promise<void> {
+  const { error } = await supabase.from("growth_check_ins").delete().eq("id", checkInId);
+  if (error) throw error;
+}
+
 export async function replaceGoals(
   checkInId: string,
   memberId: string,

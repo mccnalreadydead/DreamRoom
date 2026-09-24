@@ -18,7 +18,7 @@ import {
   trendDirection,
   toDateKey,
 } from "../../growth/lib/scoring";
-import { fetchScoredCheckIns, type GrowthCheckInScored, type GrowthMember } from "../../growth/lib/api";
+import { fetchScoredCheckIns, deleteCheckIn, type GrowthCheckInScored, type GrowthMember } from "../../growth/lib/api";
 import { Link } from "react-router-dom";
 import "./growth.css";
 
@@ -36,6 +36,8 @@ export default function Pillars() {
   const [seriesByMember, setSeriesByMember] = useState<Record<string, MemberSeries>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const membersToLoad = useMemo(() => {
     if (!activeMember) return [];
@@ -74,7 +76,23 @@ export default function Pillars() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [membersToLoad.map((m) => m.id).join(","), window_]);
+  }, [membersToLoad.map((m) => m.id).join(","), window_, reloadKey]);
+
+  async function handleDeleteWeek(checkInId: string) {
+    const confirmed = window.confirm(
+      "Delete this week's check-in? This also deletes its goals and cannot be undone."
+    );
+    if (!confirmed) return;
+    try {
+      setDeletingId(checkInId);
+      await deleteCheckIn(checkInId);
+      setReloadKey((k) => k + 1);
+    } catch (e: any) {
+      setError(e.message || "Failed to delete check-in");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const activeSeries = activeMember ? seriesByMember[activeMember.id] : undefined;
 
@@ -345,7 +363,17 @@ export default function Pillars() {
                         <div key={r.id} className="growthMonthWeek">
                           <div className="growthMonthWeekHead">
                             <span>Week of {r.week_start}</span>
-                            <ScoreBadge score={r.overall_score} size="sm" />
+                            <span className="growthRollupRowRight">
+                              <ScoreBadge score={r.overall_score} size="sm" />
+                              <button
+                                type="button"
+                                className="growthBtnDangerSm"
+                                onClick={() => handleDeleteWeek(r.id)}
+                                disabled={deletingId === r.id}
+                              >
+                                {deletingId === r.id ? "Deleting…" : "Delete"}
+                              </button>
+                            </span>
                           </div>
                           <div className="growthPillarGrid growthPillarGridCompact">
                             {GROWTH_PILLARS.map((p) => (

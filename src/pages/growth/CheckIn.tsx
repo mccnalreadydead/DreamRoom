@@ -5,6 +5,7 @@ import MemberSwitcher from "../../growth/components/MemberSwitcher";
 import { GROWTH_PILLARS, MAX_GOALS_PER_CHECK_IN, PILLAR_ANCHOR_TEXT, FOLLOWTHROUGH_ANCHOR_TEXT } from "../../growth/lib/constants";
 import { toDateKey, weekStartMonday } from "../../growth/lib/scoring";
 import {
+  deleteCheckIn,
   fetchCheckInForWeek,
   fetchGoalsForCheckIn,
   fetchPriorCheckIn,
@@ -85,6 +86,7 @@ export default function CheckIn() {
   const [goalDone, setGoalDone] = useState<Record<string, boolean>>({});
   const [loadingCheckIn, setLoadingCheckIn] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Load existing check-in for this member+week (edit mode instead of duplicating),
@@ -198,6 +200,27 @@ export default function CheckIn() {
     } catch (e: any) {
       setError(e.message || "Failed to save check-in");
       setSaveState("error");
+    }
+  }
+
+  async function handleDelete() {
+    if (!existingId) return;
+    const confirmed = window.confirm(
+      "Delete this week's check-in? This also deletes its goals and cannot be undone."
+    );
+    if (!confirmed) return;
+    try {
+      setDeleting(true);
+      setError(null);
+      await deleteCheckIn(existingId);
+      setExistingId(null);
+      setPriorGoals([]);
+      update(EMPTY_DRAFT);
+      setSaveState("idle");
+    } catch (e: any) {
+      setError(e.message || "Failed to delete check-in");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -351,6 +374,16 @@ export default function CheckIn() {
         {saveState === "saving" ? "Saving…" : existingId ? "Update Check-In" : "Save Check-In"}
       </button>
       {saveState === "saved" && <span className="growthSavedNote">Saved ✓</span>}
+      {existingId && (
+        <button
+          type="button"
+          className="growthBtnDanger"
+          onClick={handleDelete}
+          disabled={deleting}
+        >
+          {deleting ? "Deleting…" : "Delete this check-in"}
+        </button>
+      )}
     </div>
   );
 }
