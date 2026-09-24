@@ -85,17 +85,31 @@ export default function TrendChart({
 
         if (withValues.length === 0) return null;
 
-        const path = withValues
-          .map((p, idx) => {
-            const x = xFor(p.i, s.points.length);
-            const y = yFor(p.value as number);
-            return `${idx === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-          })
-          .join(" ");
+        // Break the line into separate segments wherever the underlying
+        // week index skips (e.g. a deleted or never-filled-in week) so
+        // gaps are visible instead of being smoothed over.
+        const runs: (TrendPoint & { i: number })[][] = [];
+        for (const p of withValues) {
+          const lastRun = runs[runs.length - 1];
+          if (lastRun && p.i === lastRun[lastRun.length - 1].i + 1) {
+            lastRun.push(p);
+          } else {
+            runs.push([p]);
+          }
+        }
 
         return (
           <g key={si}>
-            <path d={path} fill="none" stroke={color} strokeWidth={sparkline ? 1.5 : 2.5} />
+            {runs.map((run, ri) => {
+              const path = run
+                .map((p, idx) => {
+                  const x = xFor(p.i, s.points.length);
+                  const y = yFor(p.value as number);
+                  return `${idx === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+                })
+                .join(" ");
+              return <path key={ri} d={path} fill="none" stroke={color} strokeWidth={sparkline ? 1.5 : 2.5} />;
+            })}
             {showDots &&
               withValues.map((p) => (
                 <circle
