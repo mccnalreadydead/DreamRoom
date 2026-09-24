@@ -7,19 +7,29 @@ import TrendChart from "../../growth/components/TrendChart";
 import {
   GROWTH_PILLARS,
   TIME_WINDOW_OPTIONS,
+  LONG_TERM_GOALS_PLACEHOLDER,
   type PillarKey,
   type TimeWindow,
 } from "../../growth/lib/constants";
 import {
   average,
   boundsForWindow,
+  boundsForMonth,
   previousEqualWindow,
   roundTo,
   trendDirection,
   toDateKey,
   weekStartMonday,
+  weeksInRange,
 } from "../../growth/lib/scoring";
-import { fetchScoredCheckIns, deleteCheckIn, type GrowthCheckInScored, type GrowthMember } from "../../growth/lib/api";
+import {
+  fetchScoredCheckIns,
+  deleteCheckIn,
+  fetchLongTermGoals,
+  saveLongTermGoals,
+  type GrowthCheckInScored,
+  type GrowthMember,
+} from "../../growth/lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import "./growth.css";
 
@@ -227,10 +237,13 @@ export default function Pillars() {
 
   const chartSeries = useMemo(() => {
     const out: { label: string; points: { x: string; value: number | null }[]; color: string }[] = [];
+    const { start, end } = boundsForWindow(window_);
+    const grid = weeksInRange(start, end);
     if (activeSeries) {
+      const byWeek = new Map(activeSeries.rows.map((r) => [r.week_start, r.overall_score]));
       out.push({
         label: activeSeries.member.display_name,
-        points: activeSeries.rows.map((r) => ({ x: r.week_start, value: r.overall_score })),
+        points: grid.map((w) => ({ x: w, value: byWeek.get(w) ?? null })),
         color: "#ff8f2a",
       });
     }
@@ -239,15 +252,65 @@ export default function Pillars() {
         if (m.id === activeMember?.id) continue;
         const s = seriesByMember[m.id];
         if (!s) continue;
+        const byWeek = new Map(s.rows.map((r) => [r.week_start, r.overall_score]));
         out.push({
           label: m.display_name,
-          points: s.rows.map((r) => ({ x: r.week_start, value: r.overall_score })),
+          points: grid.map((w) => ({ x: w, value: byWeek.get(w) ?? null })),
           color: "#9d7bff",
         });
       }
     }
     return out;
-  }, [activeSeries, compareBoth, members, activeMember, seriesByMember]);
+  }, [activeSeries, compareBoth, members, activeMember, seriesByMember, window_]);
+
+  // --- Item 6: look up one specific past month/year ---
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    const currentYear = new Date().getFullYear();
+    years.add(currentYear);
+    for (const r of activeSeries?.allRows ?? []) years.add(Number(r.week_start.slice(0, 4)));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [activeSeries]);
+  const [lookupYear, setLookupYear] = useState<number>(new Date().getFullYear());
+  const [lookupMonth, setLookupMonth] = useState<number>(new Date().getMonth() + 1);
+  const monthLookupRows = useMemo(() => {
+    if (!activeSeries) return [];
+    const { start, end } = boundsForMonth(lookupYear, lookupMonth);
+    const s = toDateKey(start);
+    const e = toDateKey(end);
+    return activeSeries.allRows.filter((r) => r.week_start >= s && r.week_start <= e);
+  }, [activeSeries, lookupYear, lookupMonth]);
+  const monthLookupAvg = average(monthLookupRows.map((r) => r.overall_score));
+
+  // --- Item 5: persistent long-term goals box ---
+  const [goalsText, setGoalsText] = useState("");
+  const [goalsLoaded, setGoalsLoaded] = useState(false);
+  const [goalsSaveState, setGoalsSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  useEffect(() => {
+    if (!activeMember) return;
+    let cancelled = false;
+    setGoalsLoaded(false);
+    fetchLongTermGoals(activeMember.id).then((content) => {
+      if (!cancelled) {
+        setGoalsText(content);
+        setGoalsLoaded(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMember?.id]);
+  async function handleSaveGoals() {
+    if (!activeMember) return;
+    setGoalsSaveState("saving");
+    try {
+      await saveLongTermGoals(activeMember.id, goalsText);
+      setGoalsSaveState("saved");
+    } catch (e: any) {
+      setError(e.message || "Failed to save goals");
+      setGoalsSaveState("idle");
+    }
+  }
 
   return (
     <div className="growthPage">
@@ -256,6 +319,8 @@ export default function Pillars() {
           <h1 className="growthTitle">Pillars</h1>
           <div className="growthMuted">
             Growth trends over time · <Link to="/growth" className="growthLinkPill">Weekly Check-In →</Link>
+            {" · "}
+            <Link to="/growth/pain-log" className="growthLinkPill">Pain Log →</Link>
           </div>
         </div>
         <MemberSwitcher activeSlug={activeSlug} onChange={setActiveSlug} />
@@ -403,27 +468,16 @@ export default function Pillars() {
                               </div>
                             ))}
                           </div>
-                          {(r.proud_of || r.adjustments || r.reflection ||
-                            GROWTH_PILLARS.some((p) => r[p.noteColumn])) && (
+                          {(r.pain_note || r.life_reflection) && (
                             <div className="growthMonthNotes">
-                              {GROWTH_PILLARS.filter((p) => r[p.noteColumn]).map((p) => (
-                                <div key={p.key}>
-                                  <strong>{p.label} note:</strong> {r[p.noteColumn]}
-                                </div>
-                              ))}
-                              {r.proud_of && (
+                              {r.pain_note && (
                                 <div>
-                                  <strong>Proud of:</strong> {r.proud_of}
+                                  <strong>Pain note:</strong> {r.pain_note}
                                 </div>
                               )}
-                              {r.adjustments && (
+                              {r.life_reflection && (
                                 <div>
-                                  <strong>Adjustments:</strong> {r.adjustments}
-                                </div>
-                              )}
-                              {r.reflection && (
-                                <div>
-                                  <strong>Reflection:</strong> {r.reflection}
+                                  <strong>How's life going:</strong> {r.life_reflection}
                                 </div>
                               )}
                             </div>
@@ -455,6 +509,105 @@ export default function Pillars() {
           </ul>
         )}
       </div>
+
+      <div className="growthCard">
+        <h2 className="growthSectionTitle">Look up a specific month</h2>
+        <div className="growthControlsRow">
+          <select
+            className="growthSelect"
+            value={lookupMonth}
+            onChange={(e) => setLookupMonth(Number(e.target.value))}
+          >
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <option key={m} value={m}>
+                {new Date(2000, m - 1, 1).toLocaleDateString(undefined, { month: "long" })}
+              </option>
+            ))}
+          </select>
+          <select
+            className="growthSelect"
+            value={lookupYear}
+            onChange={(e) => setLookupYear(Number(e.target.value))}
+          >
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </div>
+        {monthLookupRows.length === 0 ? (
+          <div className="growthMuted growthEmptyState">
+            No check-in submitted for{" "}
+            {new Date(lookupYear, lookupMonth - 1, 1).toLocaleDateString(undefined, {
+              month: "long",
+              year: "numeric",
+            })}.
+          </div>
+        ) : (
+          <div className="growthMonthDetail">
+            <div className="growthMonthWeekHead">
+              <span>
+                {new Date(lookupYear, lookupMonth - 1, 1).toLocaleDateString(undefined, {
+                  month: "long",
+                  year: "numeric",
+                })}{" "}
+                average
+              </span>
+              <ScoreBadge score={monthLookupAvg} size="sm" />
+            </div>
+            {monthLookupRows.map((r) => (
+              <div key={r.id} className="growthMonthWeek">
+                <div className="growthMonthWeekHead">
+                  <span>Week of {r.week_start}</span>
+                  <ScoreBadge score={r.overall_score} size="sm" />
+                </div>
+                <div className="growthPillarGrid growthPillarGridCompact">
+                  {GROWTH_PILLARS.map((p) => (
+                    <div key={p.key} className="growthMonthPillarChip">
+                      <span className="growthMonthPillarChipLabel">{p.label}</span>
+                      <span>{r[p.scoreColumn] ?? "—"}</span>
+                    </div>
+                  ))}
+                </div>
+                {(r.pain_note || r.life_reflection) && (
+                  <div className="growthMonthNotes">
+                    {r.pain_note && (
+                      <div>
+                        <strong>Pain note:</strong> {r.pain_note}
+                      </div>
+                    )}
+                    {r.life_reflection && (
+                      <div>
+                        <strong>How's life going:</strong> {r.life_reflection}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <details className="growthCard growthGoalsBox">
+        <summary className="growthSectionTitle growthGoalsSummary">Long-term goals</summary>
+        <div className="growthMuted">Persistent — not part of the weekly check-in. Visible to both.</div>
+        <textarea
+          className="growthTextarea growthGoalsTextarea"
+          placeholder={LONG_TERM_GOALS_PLACEHOLDER}
+          value={goalsText}
+          disabled={!goalsLoaded}
+          onChange={(e) => {
+            setGoalsText(e.target.value);
+            setGoalsSaveState("idle");
+          }}
+        />
+        <button type="button" className="growthBtnPrimary growthGoalsSaveBtn" onClick={handleSaveGoals} disabled={goalsSaveState === "saving"}>
+          {goalsSaveState === "saving" ? "Saving…" : "Save goals"}
+        </button>
+        {goalsSaveState === "saved" && <span className="growthSavedNote">Saved ✓</span>}
+      </details>
     </div>
   );
 }

@@ -23,16 +23,9 @@ export type GrowthCheckIn = {
   score_work_money: number | null;
   goal_followthrough: number | null;
 
-  note_physical: string | null;
-  note_mental: string | null;
-  note_time_energy: string | null;
-  note_relationships: string | null;
-  note_habits: string | null;
-  note_work_money: string | null;
-
-  proud_of: string | null;
-  adjustments: string | null;
-  reflection: string | null;
+  // The only two written fields kept forever (see constants.ts).
+  pain_note: string | null;
+  life_reflection: string | null;
 
   created_at: string;
   updated_at: string;
@@ -173,4 +166,89 @@ export async function fetchScoredCheckIns(
     .order("week_start", { ascending: true });
   if (error) throw error;
   return (data ?? []) as GrowthCheckInScored[];
+}
+
+/** Fetches one check-in with its computed overall_score, e.g. right after saving. */
+export async function fetchScoredCheckInById(id: string): Promise<GrowthCheckInScored | null> {
+  const { data, error } = await supabase
+    .from("growth_check_in_scores")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as GrowthCheckInScored) ?? null;
+}
+
+// ---------------------------------------------------------------------
+// Standalone pain log (independent of the weekly check-in)
+// ---------------------------------------------------------------------
+export type GrowthPainLogEntry = {
+  id: string;
+  member_id: string;
+  location: string;
+  start_date: string;
+  notes: string | null;
+  resolved: boolean;
+  resolved_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function fetchPainLog(memberId: string): Promise<GrowthPainLogEntry[]> {
+  const { data, error } = await supabase
+    .from("growth_pain_log")
+    .select("*")
+    .eq("member_id", memberId)
+    .order("resolved", { ascending: true })
+    .order("start_date", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as GrowthPainLogEntry[];
+}
+
+export async function addPainLogEntry(input: {
+  member_id: string;
+  location: string;
+  start_date: string;
+  notes?: string | null;
+}): Promise<GrowthPainLogEntry> {
+  const { data, error } = await supabase
+    .from("growth_pain_log")
+    .insert(input)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as GrowthPainLogEntry;
+}
+
+export async function setPainLogResolved(id: string, resolved: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("growth_pain_log")
+    .update({ resolved, resolved_date: resolved ? toDateKey(new Date()) : null })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function deletePainLogEntry(id: string): Promise<void> {
+  const { error } = await supabase.from("growth_pain_log").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// Long-term goals (persistent free-text box on the Pillars page)
+// ---------------------------------------------------------------------
+export async function fetchLongTermGoals(memberId: string): Promise<string> {
+  const { data, error } = await supabase
+    .from("growth_long_term_goals")
+    .select("content")
+    .eq("member_id", memberId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.content ?? "";
+}
+
+export async function saveLongTermGoals(memberId: string, content: string): Promise<void> {
+  const { error } = await supabase
+    .from("growth_long_term_goals")
+    .upsert({ member_id: memberId, content }, { onConflict: "member_id" });
+  if (error) throw error;
 }

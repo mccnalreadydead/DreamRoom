@@ -13,9 +13,10 @@ function readStoredSlug(): MemberSlug {
 }
 
 /**
- * Shared-device profile switcher (NOT real per-user auth — see
- * GROWTH_PRIVACY in constants.ts). Persists the active slug in
- * localStorage and resolves it to the matching growth_members row.
+ * Shared-device profile switcher (NOT real per-user auth). Persists the
+ * active slug in localStorage and resolves it to the matching
+ * growth_members row. No privacy split between Devan and Chad — both can
+ * see all scores, the pain log, and the long-term goals box.
  */
 export function useActiveMember() {
   const [activeSlug, setActiveSlugState] = useState<MemberSlug>(() => readStoredSlug());

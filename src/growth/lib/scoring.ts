@@ -93,3 +93,25 @@ export function previousEqualWindow(
   const prevStart = new Date(prevEnd.getTime() - spanMs);
   return { start: prevStart, end: prevEnd };
 }
+
+/**
+ * Every Monday (week_start) between start and end inclusive. Used to build
+ * a complete weekly grid so a deleted/never-filled-in week renders as a real
+ * gap in the trend chart instead of the line jumping straight to the next
+ * point that exists.
+ */
+export function weeksInRange(start: Date, end: Date): string[] {
+  const out: string[] = [];
+  let cursor = parseDateKey(weekStartMonday(start));
+  const last = parseDateKey(weekStartMonday(end));
+  while (cursor.getTime() <= last.getTime()) {
+    out.push(toDateKey(cursor));
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
+  }
+  return out;
+}
+
+/** Start/end (inclusive) Date bounds for one specific calendar month/year. */
+export function boundsForMonth(year: number, month1to12: number): { start: Date; end: Date } {
+  return { start: new Date(year, month1to12 - 1, 1), end: new Date(year, month1to12, 0) };
+}
