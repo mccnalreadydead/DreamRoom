@@ -32,6 +32,11 @@ update growth_check_ins
 set life_reflection = reflection
 where life_reflection is null and reflection is not null;
 
+-- growth_check_in_scores selects ci.* and therefore depends on every
+-- column below being dropped. Drop it first; it's recreated later in
+-- this same file with the new column set.
+drop view if exists growth_check_in_scores;
+
 alter table growth_check_ins
   drop column if exists note_physical,
   drop column if exists note_mental,
