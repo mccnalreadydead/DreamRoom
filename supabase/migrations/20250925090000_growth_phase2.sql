@@ -27,10 +27,20 @@ alter table growth_check_ins add column if not exists pain_note text;
 alter table growth_check_ins add column if not exists life_reflection text;
 
 -- Preserve any existing "reflection" text as a starting point for the
--- renamed life_reflection field before dropping the old column.
-update growth_check_ins
-set life_reflection = reflection
-where life_reflection is null and reflection is not null;
+-- renamed life_reflection field before dropping the old column. Guarded
+-- so this is safe to re-run even after "reflection" has already been
+-- dropped by a prior run of this same script.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_name = 'growth_check_ins' and column_name = 'reflection'
+  ) then
+    update growth_check_ins
+    set life_reflection = reflection
+    where life_reflection is null and reflection is not null;
+  end if;
+end $$;
 
 -- growth_check_in_scores selects ci.* and therefore depends on every
 -- column below being dropped. Drop it first; it's recreated later in
@@ -57,6 +67,30 @@ alter table growth_check_ins
   drop constraint if exists growth_check_ins_life_reflection_len,
   add constraint growth_check_ins_life_reflection_len
     check (life_reflection is null or char_length(life_reflection) <= 600);
+
+-- Recreate the view that was dropped above, now with the new column set
+-- (pain_note/life_reflection in place of the removed note_*/proud_of/
+-- adjustments/reflection columns). Single source of truth for overall_score.
+create or replace view growth_check_in_scores as
+select
+  ci.*,
+  round(avg(v.val) * 10) as overall_score,
+  count(v.val)::int as scored_field_count
+from growth_check_ins ci
+cross join lateral (
+  select val
+  from unnest(array[
+    ci.score_physical,
+    ci.score_mental,
+    ci.score_time_energy,
+    ci.score_relationships,
+    ci.score_habits,
+    ci.score_work_money,
+    ci.goal_followthrough
+  ]) as val
+  where val is not null
+) v
+group by ci.id;
 
 -- ---------------------------------------------------------
 -- growth_pain_log
