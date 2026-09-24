@@ -9,6 +9,7 @@ const links = [
   { to: "/item-sales", label: "Item % sales" },
   { to: "/tracking", label: "Tracking" },
   { to: "/new-product", label: "Resell Products" },
+  { to: "/growth", label: "Growth" },
 ];
 
 export default function Layout() {

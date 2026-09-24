@@ -1,0 +1,455 @@
+/* src/pages/growth/growth.css
+   Personal Growth add-on — matches the existing dark nebula / orange-glow
+   theme (Layout.tsx nav pills, index.css palette) and reuses the app's
+   generic .card/.btn/.input/.label/.muted conventions where useful. */
+
+.growthPage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+  margin: 0 auto;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.growthHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.growthTitle {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.growthMuted {
+  color: rgba(255, 255, 255, 0.60);
+  font-size: 13px;
+}
+
+.growthLinkPill {
+  color: #ffb066;
+  font-weight: 700;
+}
+.growthLinkPill:hover {
+  text-decoration: underline;
+}
+
+.growthCard {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 143, 42, 0.16);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.growthSectionTitle {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.growthLabel {
+  display: block;
+  margin: 8px 0 6px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 13px;
+}
+
+.growthInput,
+.growthSelect {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 143, 42, 0.20);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 10px;
+  border-radius: 12px;
+  outline: none;
+  font-size: 14px;
+}
+
+.growthGoalInput {
+  margin-bottom: 8px;
+}
+
+.growthTextarea {
+  width: 100%;
+  min-height: 72px;
+  margin-top: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 143, 42, 0.20);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 10px;
+  border-radius: 12px;
+  outline: none;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.growthBtnPrimary {
+  align-self: flex-start;
+  border: 1px solid rgba(255, 168, 84, 0.55);
+  background: linear-gradient(180deg, rgba(255, 143, 42, 0.30), rgba(255, 255, 255, 0.03));
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 999px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35), 0 0 18px rgba(255, 143, 42, 0.25);
+}
+.growthBtnPrimary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.growthSavedNote {
+  margin-left: 10px;
+  color: #3ddc84;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.growthError {
+  color: #ff8080;
+  background: rgba(255, 80, 80, 0.10);
+  border: 1px solid rgba(255, 80, 80, 0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+/* Member switcher (segmented control) */
+.growthSwitcher {
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 143, 42, 0.20);
+  background: rgba(0, 0, 0, 0.35);
+}
+.growthSwitcherBtn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.70);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+.growthSwitcherBtn.active {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255, 143, 42, 0.32), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 0 16px rgba(255, 143, 42, 0.30);
+}
+
+/* Progress bar (Check-In page) */
+.growthProgressWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.growthProgressBar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.growthProgressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff5b5b, #f2c94c, #3ddc84);
+  transition: width 0.25s ease;
+}
+.growthProgressLabel {
+  text-align: right;
+}
+
+/* 1-10 score picker */
+.growthScoreSlider {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.growthScoreDot {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.30);
+  color: rgba(255, 255, 255, 0.80);
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+}
+.growthScoreDot.active {
+  border-color: rgba(255, 168, 84, 0.75);
+  background: linear-gradient(180deg, rgba(255, 143, 42, 0.35), rgba(255, 255, 255, 0.04));
+  color: #fff;
+  box-shadow: 0 0 14px rgba(255, 143, 42, 0.35);
+}
+
+.growthGoalList {
+  margin: 6px 0 12px;
+  padding-left: 0;
+  list-style: none;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.growthGoalDoneRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.growthGoalDoneRow input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: #ff8f2a;
+}
+
+/* Score badge */
+.growthScoreBadgeWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.growthScoreBadge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid;
+  font-weight: 900;
+  background: rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+.growthScoreBadgeSuffix {
+  font-size: 10px;
+  margin-left: 1px;
+}
+.growthScoreBadgeLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.60);
+  text-align: center;
+}
+
+/* Controls row (Pillars page) */
+.growthControlsRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.growthSelect {
+  max-width: 200px;
+}
+.growthCompareToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.80);
+}
+
+.growthOverallCard {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.growthTrendInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.growthTrendArrow {
+  font-weight: 900;
+  font-size: 16px;
+}
+.growthTrendArrow-up { color: #3ddc84; }
+.growthTrendArrow-down { color: #ff5b5b; }
+.growthTrendArrow-flat { color: #f2c94c; }
+.growthTrendArrow-none { color: rgba(255,255,255,0.5); }
+.growthStreak {
+  margin-left: auto;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.growthCallout {
+  border: 1px solid rgba(255, 168, 84, 0.35);
+  background: rgba(255, 143, 42, 0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.90);
+}
+
+.growthPillarGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .growthPillarGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.growthPillarCard {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 143, 42, 0.16);
+  border-radius: 16px;
+  padding: 12px;
+}
+.growthPillarCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.growthPillarLabel {
+  font-weight: 800;
+  font-size: 14px;
+}
+.growthPillarDesc {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.growthPillarSparkline {
+  margin-top: 8px;
+}
+
+.growthChartSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.growthChartEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 13px;
+}
+
+.growthRollupList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.growthRollupRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+  font-size: 13px;
+}
+
+.growthRollupItem {
+  display: flex;
+  flex-direction: column;
+}
+.growthRollupRowBtn {
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  padding: 6px 0 8px;
+}
+.growthRollupRowRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.growthRollupCaret {
+  color: rgba(255, 255, 255, 0.45);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.growthRollupCaret.open {
+  transform: rotate(180deg);
+  color: #ffb066;
+}
+
+.growthMonthDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 10px;
+}
+.growthMonthWeek {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 143, 42, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.growthMonthWeekHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.growthPillarGridCompact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+@media (max-width: 640px) {
+  .growthPillarGridCompact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.growthMonthPillarChip {
+  display: flex;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+.growthMonthPillarChipLabel {
+  color: rgba(255, 255, 255, 0.55);
+}
+.growthMonthNotes {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.80);
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+  padding-top: 8px;
+}
+.growthMonthNotes strong {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.growthPillarCardScoreCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.growthTrendArrowSm {
+  font-size: 12px;
+  min-height: 14px;
+}
+
