@@ -14,7 +14,7 @@ import {
   upsertCheckIn,
   type GrowthGoal,
 } from "../../growth/lib/api";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import "./growth.css";
 
 type Draft = {
@@ -75,9 +75,23 @@ const SCORE_KEY: Record<string, keyof Draft> = {
 };
 
 export default function CheckIn() {
+  const [searchParams] = useSearchParams();
   const { activeSlug, setActiveSlug, activeMember, loading: memberLoading, error: memberError } = useActiveMember();
-  const [checkInDate, setCheckInDate] = useState<string>(() => toDateKey(new Date()));
+  const [checkInDate, setCheckInDate] = useState<string>(
+    () => searchParams.get("date") || toDateKey(new Date())
+  );
   const weekStart = useMemo(() => weekStartMonday(new Date(checkInDate + "T00:00:00")), [checkInDate]);
+
+  // Deep-linked edit (from Pillars → Edit): jump to that member/week once on mount.
+  useEffect(() => {
+    const memberParam = searchParams.get("member");
+    if (memberParam === "devan" || memberParam === "chad") {
+      setActiveSlug(memberParam);
+    }
+    const dateParam = searchParams.get("date");
+    if (dateParam) setCheckInDate(dateParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { draft, update, savedAt } = useCheckInDraft<Draft>(activeSlug, weekStart, EMPTY_DRAFT);
 

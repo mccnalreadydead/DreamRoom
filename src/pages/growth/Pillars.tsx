@@ -17,9 +17,10 @@ import {
   roundTo,
   trendDirection,
   toDateKey,
+  weekStartMonday,
 } from "../../growth/lib/scoring";
 import { fetchScoredCheckIns, deleteCheckIn, type GrowthCheckInScored, type GrowthMember } from "../../growth/lib/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "./growth.css";
 
 type MemberSeries = {
@@ -92,6 +93,13 @@ export default function Pillars() {
     } finally {
       setDeletingId(null);
     }
+  }
+
+  const navigate = useNavigate();
+  function handleEditWeek(row: GrowthCheckInScored) {
+    const confirmed = window.confirm("Edit this week's check-in?");
+    if (!confirmed) return;
+    navigate(`/growth?date=${row.check_in_date}&member=${activeSlug}`);
   }
 
   const activeSeries = activeMember ? seriesByMember[activeMember.id] : undefined;
@@ -175,6 +183,19 @@ export default function Pillars() {
       }
     }
     return count;
+  }, [activeSeries]);
+
+  const nextCheckIn = useMemo(() => {
+    const today = new Date();
+    const thisWeekStart = weekStartMonday(today);
+    const submittedThisWeek = activeSeries?.allRows.some((r) => r.week_start === thisWeekStart) ?? false;
+    const dow = today.getDay(); // 0 = Sun .. 6 = Sat
+    const daysUntilNextMonday = dow === 0 ? 1 : 8 - dow; // Mon=1 -> 7, ... Sun=0 -> 1
+    if (submittedThisWeek) {
+      return { submitted: true, days: daysUntilNextMonday };
+    }
+    const daysLeftThisWeek = dow === 0 ? 0 : 7 - dow; // days remaining until this week ends (Sun)
+    return { submitted: false, days: daysLeftThisWeek };
   }, [activeSeries]);
 
   const monthlyRollup = useMemo(() => {
@@ -284,7 +305,16 @@ export default function Pillars() {
           </div>
           <div className="growthMuted">vs. previous equal period</div>
         </div>
-        <div className="growthStreak">🔥 {streak}-week streak</div>
+        <div className="growthStreakCol">
+          <div className="growthStreak">🔥 {streak}-week streak</div>
+          <div className="growthCountdown">
+            {nextCheckIn.submitted
+              ? `✓ Submitted · next check-in opens in ${nextCheckIn.days}d`
+              : nextCheckIn.days === 0
+              ? "Check-in due today"
+              : `⏳ ${nextCheckIn.days}d left to submit this week`}
+          </div>
+        </div>
       </div>
 
       <div className="growthCard">
@@ -363,17 +393,7 @@ export default function Pillars() {
                         <div key={r.id} className="growthMonthWeek">
                           <div className="growthMonthWeekHead">
                             <span>Week of {r.week_start}</span>
-                            <span className="growthRollupRowRight">
-                              <ScoreBadge score={r.overall_score} size="sm" />
-                              <button
-                                type="button"
-                                className="growthBtnDangerSm"
-                                onClick={() => handleDeleteWeek(r.id)}
-                                disabled={deletingId === r.id}
-                              >
-                                {deletingId === r.id ? "Deleting…" : "Delete"}
-                              </button>
-                            </span>
+                            <ScoreBadge score={r.overall_score} size="sm" />
                           </div>
                           <div className="growthPillarGrid growthPillarGridCompact">
                             {GROWTH_PILLARS.map((p) => (
@@ -408,6 +428,23 @@ export default function Pillars() {
                               )}
                             </div>
                           )}
+                          <div className="growthMonthWeekActions">
+                            <button
+                              type="button"
+                              className="growthBtnEditSm"
+                              onClick={() => handleEditWeek(r)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="growthBtnDangerSm"
+                              onClick={() => handleDeleteWeek(r.id)}
+                              disabled={deletingId === r.id}
+                            >
+                              {deletingId === r.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

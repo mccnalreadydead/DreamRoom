@@ -144,6 +144,17 @@
   cursor: default;
 }
 
+.growthBtnEditSm {
+  border: 1px solid rgba(242, 201, 76, 0.45);
+  background: rgba(242, 201, 76, 0.10);
+  color: #f2c94c;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .growthError {
   color: #ff8080;
   background: rgba(255, 80, 80, 0.10);
@@ -313,6 +324,17 @@
   font-weight: 800;
   font-size: 14px;
 }
+.growthStreakCol {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.growthCountdown {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.60);
+}
 
 .growthCallout {
   border: 1px solid rgba(255, 168, 84, 0.35);
@@ -471,6 +493,13 @@
 }
 .growthMonthNotes strong {
   color: rgba(255, 255, 255, 0.95);
+}
+
+.growthMonthWeekActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .growthPillarCardScoreCol {
