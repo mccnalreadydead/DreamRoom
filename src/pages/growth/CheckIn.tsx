@@ -541,7 +541,7 @@ export default function CheckIn() {
                 pillar.key !== "physical" && (
                   <textarea
                     className="growthTextarea"
-                    placeholder={`Notes on ${pillar.label.toLowerCase()} (for your reflection — not saved)`}
+                    placeholder={`Notes on ${pillar.label.toLowerCase()} (optional)`}
                     value={draft[EPHEMERAL_NOTE_KEY[pillar.key]] as string}
                     onChange={(e) => update({ [EPHEMERAL_NOTE_KEY[pillar.key]]: e.target.value } as Partial<Draft>)}
                   />
@@ -622,7 +622,7 @@ export default function CheckIn() {
 
           <section className="growthCard">
             <h2 className="growthSectionTitle">Adjustments</h2>
-            <div className="growthMuted">For your reflection — not saved.</div>
+            <div className="growthMuted">Optional.</div>
             <textarea
               className="growthTextarea"
               placeholder="What will you adjust going forward?"
