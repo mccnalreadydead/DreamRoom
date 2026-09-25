@@ -13,7 +13,7 @@ import {
   PILLAR_ANCHOR_TEXT,
   FOLLOWTHROUGH_ANCHOR_TEXT,
 } from "../../growth/lib/constants";
-import { toDateKey, weekStartMonday, colorFor, weekDates, DAY_LABELS, DAY_NAMES } from "../../growth/lib/scoring";
+import { toDateKey, weekStartMonday, colorFor, weekDates, DAY_NAMES } from "../../growth/lib/scoring";
 import {
   deleteCheckIn,
   ensureHabitsForCheckIn,
@@ -112,6 +112,11 @@ export default function CheckIn() {
   }, []);
 
   const { draft, update, setDraft, savedAt } = useCheckInDraft<Draft>(activeSlug, weekStart, EMPTY_DRAFT);
+
+  // Goals/tasks start collapsed to 2 visible slots each, with a "+ Add
+  // another" button to reveal more (up to MAX_GOALS/TASKS_PER_CHECK_IN).
+  const [visibleGoals, setVisibleGoals] = useState(2);
+  const [visibleTasks, setVisibleTasks] = useState(2);
 
   const [existingId, setExistingId] = useState<string | null>(null);
   const [priorGoals, setPriorGoals] = useState<GrowthGoal[]>([]);
@@ -247,6 +252,8 @@ export default function CheckIn() {
       setThisWeekHabits(habitRows);
       setShowForm(false);
       setDraft(EMPTY_DRAFT); // fully reset the form now that it's submitted
+      setVisibleGoals(2);
+      setVisibleTasks(2);
       setSaveState("idle");
     } catch (e: any) {
       setError(e.message || "Failed to save check-in");
@@ -269,6 +276,8 @@ export default function CheckIn() {
       goalFollowthrough: summary.goal_followthrough,
       proudOf: summary.proud_of ?? "",
     });
+    setVisibleGoals(2);
+    setVisibleTasks(2);
     (async () => {
       if (existingId) {
         const rows = await fetchGoalsForCheckIn(existingId);
@@ -278,6 +287,7 @@ export default function CheckIn() {
             if (i < MAX_GOALS_PER_CHECK_IN) goals[i] = g.goal_text;
           });
           update({ goals });
+          setVisibleGoals(Math.max(2, rows.length));
         }
         const taskRows = await fetchWeeklyTasks(existingId);
         if (taskRows.length > 0) {
@@ -286,6 +296,7 @@ export default function CheckIn() {
             if (i < MAX_TASKS_PER_CHECK_IN) tasks[i] = t.task_text;
           });
           update({ tasks });
+          setVisibleTasks(Math.max(2, taskRows.length));
         }
       }
     })();
@@ -307,6 +318,8 @@ export default function CheckIn() {
       setPriorGoals([]);
       setThisWeekHabits([]);
       setDraft(EMPTY_DRAFT);
+      setVisibleGoals(2);
+      setVisibleTasks(2);
       setShowForm(true);
     } catch (e: any) {
       setError(e.message || "Failed to delete check-in");
@@ -456,6 +469,16 @@ export default function CheckIn() {
 
               {pillar.key === "habits" && priorHabits.length > 0 && (
                 <div className="growthHabitHistory">
+                  <div className="growthMuted growthHabitHistoryIntro">Last week's habits:</div>
+                  <div className="growthHabitDayHeader">
+                    <div className="growthHabitDots">
+                      {DAY_NAMES.map((name) => (
+                        <span key={name} className="growthHabitDayLabel">
+                          {name.slice(0, 1)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                   {priorHabits.map((h, i) => (
                     <div key={i} className="growthHabitHistoryRow">
                       <div className="growthHabitHistoryText">{h.habit_text}</div>
@@ -466,7 +489,7 @@ export default function CheckIn() {
                             className={`growthHabitDot${status ? ` growthHabitDot-${status}` : ""}`}
                             title={`${DAY_NAMES[di]}: ${status === "on" ? "on track" : status === "off" ? "off track" : "not logged"}`}
                           >
-                            {DAY_LABELS[di]}
+                            {status === "on" ? "✓" : status === "off" ? "✕" : ""}
                           </span>
                         ))}
                       </div>
@@ -544,7 +567,7 @@ export default function CheckIn() {
 
           <section className="growthCard">
             <h2 className="growthSectionTitle">Goals for next week</h2>
-            {draft.goals.map((g, i) => (
+            {draft.goals.slice(0, visibleGoals).map((g, i) => (
               <input
                 key={i}
                 className="growthInput growthGoalInput"
@@ -557,6 +580,15 @@ export default function CheckIn() {
                 }}
               />
             ))}
+            {visibleGoals < MAX_GOALS_PER_CHECK_IN && (
+              <button
+                type="button"
+                className="growthBtnAddSlot"
+                onClick={() => setVisibleGoals((n) => Math.min(MAX_GOALS_PER_CHECK_IN, n + 1))}
+              >
+                + Add another goal
+              </button>
+            )}
           </section>
 
           <section className="growthCard">
@@ -564,7 +596,7 @@ export default function CheckIn() {
             <div className="growthMuted">
               What are some small tasks you'd like to accomplish? (e.g. "making an Amazon store") — shown on your Home screen.
             </div>
-            {draft.tasks.map((t, i) => (
+            {draft.tasks.slice(0, visibleTasks).map((t, i) => (
               <input
                 key={i}
                 className="growthInput growthGoalInput"
@@ -577,6 +609,15 @@ export default function CheckIn() {
                 }}
               />
             ))}
+            {visibleTasks < MAX_TASKS_PER_CHECK_IN && (
+              <button
+                type="button"
+                className="growthBtnAddSlot"
+                onClick={() => setVisibleTasks((n) => Math.min(MAX_TASKS_PER_CHECK_IN, n + 1))}
+              >
+                + Add another task
+              </button>
+            )}
           </section>
 
           <section className="growthCard">

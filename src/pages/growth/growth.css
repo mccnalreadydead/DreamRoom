@@ -101,6 +101,22 @@
   margin-bottom: 8px;
 }
 
+.growthBtnAddSlot {
+  border: 1px dashed rgba(255, 168, 84, 0.45);
+  background: transparent;
+  color: #ffb066;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.growthBtnAddSlot:hover {
+  border-color: rgba(255, 168, 84, 0.75);
+  background: rgba(255, 143, 42, 0.08);
+}
+
 .growthTextarea {
   width: 100%;
   min-height: 72px;
@@ -755,6 +771,45 @@
 }
 .growthHomeDailyDetails .growthHomeAddRow {
   margin-top: 8px;
+}
+
+/* Visible dropdown caret on collapsible summaries (Daily to-dos, Done) */
+.growthCaretSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.growthCaret {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  color: #ffb066;
+  font-size: 10px;
+}
+details[open] > summary .growthCaret {
+  transform: rotate(90deg);
+}
+
+/* Day-of-week header row above habit tracker dots (Home + Check-In history) */
+.growthHabitDayHeader {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 4px;
+}
+.growthHabitTrackerTextSpacer {
+  flex: 1 1 auto;
+  min-width: 60px;
+}
+.growthHabitDayLabel {
+  width: 28px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.40);
+  flex-shrink: 0;
+}
+.growthHabitHistoryIntro {
+  margin-bottom: 2px;
 }
 
 /* Habit history shown in next week's Check-In (read-only, above the score) */
