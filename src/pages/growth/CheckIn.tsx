@@ -267,8 +267,6 @@ export default function CheckIn() {
           <h1 className="growthTitle">Weekly Check-In</h1>
           <div className="growthMuted">
             Week of {weekStart} · <Link to="/growth/pillars" className="growthLinkPill">View Pillars →</Link>
-            {" · "}
-            <Link to="/growth/pain-log" className="growthLinkPill">Pain Log →</Link>
           </div>
         </div>
         <MemberSwitcher activeSlug={activeSlug} onChange={setActiveSlug} />

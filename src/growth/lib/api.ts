@@ -180,60 +180,6 @@ export async function fetchScoredCheckInById(id: string): Promise<GrowthCheckInS
 }
 
 // ---------------------------------------------------------------------
-// Standalone pain log (independent of the weekly check-in)
-// ---------------------------------------------------------------------
-export type GrowthPainLogEntry = {
-  id: string;
-  member_id: string;
-  location: string;
-  start_date: string;
-  notes: string | null;
-  resolved: boolean;
-  resolved_date: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export async function fetchPainLog(memberId: string): Promise<GrowthPainLogEntry[]> {
-  const { data, error } = await supabase
-    .from("growth_pain_log")
-    .select("*")
-    .eq("member_id", memberId)
-    .order("resolved", { ascending: true })
-    .order("start_date", { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as GrowthPainLogEntry[];
-}
-
-export async function addPainLogEntry(input: {
-  member_id: string;
-  location: string;
-  start_date: string;
-  notes?: string | null;
-}): Promise<GrowthPainLogEntry> {
-  const { data, error } = await supabase
-    .from("growth_pain_log")
-    .insert(input)
-    .select("*")
-    .single();
-  if (error) throw error;
-  return data as GrowthPainLogEntry;
-}
-
-export async function setPainLogResolved(id: string, resolved: boolean): Promise<void> {
-  const { error } = await supabase
-    .from("growth_pain_log")
-    .update({ resolved, resolved_date: resolved ? toDateKey(new Date()) : null })
-    .eq("id", id);
-  if (error) throw error;
-}
-
-export async function deletePainLogEntry(id: string): Promise<void> {
-  const { error } = await supabase.from("growth_pain_log").delete().eq("id", id);
-  if (error) throw error;
-}
-
-// ---------------------------------------------------------------------
 // Long-term goals (persistent free-text box on the Pillars page)
 // ---------------------------------------------------------------------
 export async function fetchLongTermGoals(memberId: string): Promise<string> {

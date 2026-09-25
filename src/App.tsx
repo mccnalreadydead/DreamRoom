@@ -13,7 +13,6 @@ const SalesMetrics = lazy(() => import("./pages/SalesMetrics"));
 const ItemSalesByMonth = lazy(() => import("./pages/ItemSalesByMonth"));
 const GrowthCheckIn = lazy(() => import("./pages/growth/CheckIn"));
 const GrowthPillars = lazy(() => import("./pages/growth/Pillars"));
-const GrowthPainLog = lazy(() => import("./pages/growth/PainLog"));
 
 export default function App() {
   return (
@@ -29,7 +28,6 @@ export default function App() {
           <Route path="new-product" element={<NewProduct />} />
           <Route path="growth" element={<GrowthCheckIn />} />
           <Route path="growth/pillars" element={<GrowthPillars />} />
-          <Route path="growth/pain-log" element={<GrowthPainLog />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

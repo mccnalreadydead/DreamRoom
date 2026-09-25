@@ -291,12 +291,21 @@ export default function Pillars() {
     if (!activeMember) return;
     let cancelled = false;
     setGoalsLoaded(false);
-    fetchLongTermGoals(activeMember.id).then((content) => {
-      if (!cancelled) {
-        setGoalsText(content);
-        setGoalsLoaded(true);
-      }
-    });
+    fetchLongTermGoals(activeMember.id)
+      .then((content) => {
+        if (!cancelled) {
+          setGoalsText(content);
+          setGoalsLoaded(true);
+        }
+      })
+      .catch((e: any) => {
+        // Don't let a failed fetch leave the box stuck un-editable — start
+        // from a blank box instead so you can still type and save.
+        if (!cancelled) {
+          setError(e.message || "Failed to load long-term goals");
+          setGoalsLoaded(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -332,12 +341,38 @@ export default function Pillars() {
           <h1 className="growthTitle">Pillars</h1>
           <div className="growthMuted">
             Growth trends over time · <Link to="/growth" className="growthLinkPill">Weekly Check-In →</Link>
-            {" · "}
-            <Link to="/growth/pain-log" className="growthLinkPill">Pain Log →</Link>
           </div>
         </div>
         <MemberSwitcher activeSlug={activeSlug} onChange={setActiveSlug} />
       </div>
+
+      <section className="growthCard growthGoalsBox">
+        <h2 className="growthSectionTitle">🎯 Long-term goals</h2>
+        <div className="growthMuted">
+          Persistent — not part of the weekly check-in, editable anytime, visible to both.
+        </div>
+        <textarea
+          className="growthTextarea growthGoalsTextarea"
+          placeholder={LONG_TERM_GOALS_PLACEHOLDER}
+          value={goalsText}
+          onChange={(e) => {
+            setGoalsText(e.target.value);
+            setGoalsSaveState("idle");
+          }}
+        />
+        <div className="growthGoalsFooter">
+          <button
+            type="button"
+            className="growthBtnPrimary growthGoalsSaveBtn"
+            onClick={handleSaveGoals}
+            disabled={goalsSaveState === "saving" || !goalsLoaded}
+          >
+            {goalsSaveState === "saving" ? "Saving…" : "Save goals"}
+          </button>
+          {goalsSaveState === "saved" && <span className="growthSavedNote">Saved ✓</span>}
+          {!goalsLoaded && <span className="growthMuted">Loading your goals…</span>}
+        </div>
+      </section>
 
       <div className="growthControlsRow">
         <select
@@ -613,25 +648,6 @@ export default function Pillars() {
           </div>
         )}
       </div>
-
-      <details className="growthCard growthGoalsBox">
-        <summary className="growthSectionTitle growthGoalsSummary">Long-term goals</summary>
-        <div className="growthMuted">Persistent — not part of the weekly check-in. Visible to both.</div>
-        <textarea
-          className="growthTextarea growthGoalsTextarea"
-          placeholder={LONG_TERM_GOALS_PLACEHOLDER}
-          value={goalsText}
-          disabled={!goalsLoaded}
-          onChange={(e) => {
-            setGoalsText(e.target.value);
-            setGoalsSaveState("idle");
-          }}
-        />
-        <button type="button" className="growthBtnPrimary growthGoalsSaveBtn" onClick={handleSaveGoals} disabled={goalsSaveState === "saving"}>
-          {goalsSaveState === "saving" ? "Saving…" : "Save goals"}
-        </button>
-        {goalsSaveState === "saved" && <span className="growthSavedNote">Saved ✓</span>}
-      </details>
     </div>
   );
 }
