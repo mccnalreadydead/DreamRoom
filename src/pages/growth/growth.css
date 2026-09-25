@@ -283,6 +283,21 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
+/* Read-only numbered statements (Home's "This week's goals") — no
+   checkbox, just the goal text as a plain numbered line. */
+.growthGoalNumberedList {
+  margin: 6px 0 4px;
+  padding-left: 20px;
+  color: rgba(255, 255, 255, 0.90);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.growthGoalNumberedList li {
+  padding-left: 4px;
+  font-size: 13.5px;
+}
+
 .growthGoalDoneRow {
   display: flex;
   align-items: center;

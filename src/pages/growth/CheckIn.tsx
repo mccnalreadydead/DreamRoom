@@ -54,7 +54,7 @@ type Draft = {
   proudOf: string; // persisted, optional, doesn't affect score
   goals: string[];
   tasks: string[]; // "small tasks this week" — persisted, shown on Home
-  habits: string[]; // exactly 3 slots, persisted, tracked daily on Home
+  habits: string[]; // exactly 2 slots, persisted, tracked daily on Home
   adjustments: string; // ephemeral
 };
 
@@ -519,7 +519,7 @@ export default function CheckIn() {
                 ) : (
                   <>
                     <div className="growthMuted">
-                      Exactly 3 habits or goals to track daily this week (tap them on Home each day).
+                      Exactly 2 habits to build or break to track daily this week (tap them on Home each day).
                     </div>
                     {draft.habits.map((t, i) => (
                       <input

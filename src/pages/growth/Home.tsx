@@ -13,7 +13,6 @@ import {
   fetchScoredCheckIns,
   fetchTasksForMember,
   fetchWeeklyTasks,
-  markGoalCompleted,
   setHabitLogStatus,
   setTaskCompleted,
   type GrowthGoal,
@@ -89,15 +88,6 @@ export default function Home() {
 
   function reload() {
     setReloadKey((k) => k + 1);
-  }
-
-  async function handleToggleGoal(goalId: string, completed: boolean) {
-    try {
-      await markGoalCompleted(goalId, completed);
-      reload();
-    } catch (e: any) {
-      setError(e.message || "Failed to update goal");
-    }
   }
 
   async function handleToggleTask(taskId: string, completed: boolean) {
@@ -177,7 +167,7 @@ export default function Home() {
         <div className="growthHomeSection growthHomeHabitsSection">
           <div className="growthHomeSectionLabel">Habit trackers</div>
           {!data?.hasCheckInThisWeek ? (
-            <div className="growthMuted">Submit this week's check-in to set your 3 habits.</div>
+            <div className="growthMuted">Submit this week's check-in to set your 2 habits.</div>
           ) : data.habits.length === 0 ? (
             <div className="growthMuted">No habits set this week.</div>
           ) : (
@@ -236,20 +226,11 @@ export default function Home() {
           ) : data.goals.length === 0 ? (
             <div className="growthMuted">No goals set this week.</div>
           ) : (
-            <ul className="growthGoalList">
+            <ol className="growthGoalNumberedList">
               {data.goals.map((g) => (
-                <li key={g.id}>
-                  <label className="growthGoalDoneRow">
-                    <input
-                      type="checkbox"
-                      checked={g.completed ?? false}
-                      onChange={(e) => handleToggleGoal(g.id, e.target.checked)}
-                    />
-                    <span>{g.goal_text}</span>
-                  </label>
-                </li>
+                <li key={g.id}>{g.goal_text}</li>
               ))}
-            </ul>
+            </ol>
           )}
         </div>
 
