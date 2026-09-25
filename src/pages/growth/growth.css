@@ -627,7 +627,7 @@
   box-shadow: 0 0 0 1px rgba(255, 200, 87, 0.15), 0 10px 26px rgba(255, 200, 87, 0.10);
 }
 .growthGoalsTextarea {
-  min-height: 130px;
+  min-height: 260px;
   font-size: 16px;
   font-weight: 700;
   line-height: 1.5;
