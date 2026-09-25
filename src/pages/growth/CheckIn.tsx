@@ -293,12 +293,17 @@ export default function CheckIn() {
             <ScoreBadge score={summary.overall_score} size="lg" label="Overall score" />
           </div>
           <div className="growthPillarGrid growthPillarGridCompact">
-            {GROWTH_PILLARS.map((p) => (
-              <div key={p.key} className="growthMonthPillarChip">
-                <span className="growthMonthPillarChipLabel">{p.label}</span>
-                <span>{summary[p.scoreColumn] ?? "—"}</span>
-              </div>
-            ))}
+            {GROWTH_PILLARS.map((p) => {
+              const val = summary[p.scoreColumn];
+              return (
+                <div key={p.key} className="growthMonthPillarChip">
+                  <span className="growthMonthPillarChipLabel">{p.label}</span>
+                  <span style={val != null ? { color: colorFor(val * 10), fontWeight: 800 } : undefined}>
+                    {val ?? "—"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           {(summary.pain_note || summary.life_reflection) && (
             <div className="growthMonthNotes">

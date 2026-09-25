@@ -21,6 +21,7 @@ import {
   toDateKey,
   weekStartMonday,
   weeksInRange,
+  colorFor,
 } from "../../growth/lib/scoring";
 import {
   fetchScoredCheckIns,
@@ -474,12 +475,17 @@ export default function Pillars() {
                             <ScoreBadge score={r.overall_score} size="sm" />
                           </div>
                           <div className="growthPillarGrid growthPillarGridCompact">
-                            {GROWTH_PILLARS.map((p) => (
-                              <div key={p.key} className="growthMonthPillarChip">
-                                <span className="growthMonthPillarChipLabel">{p.label}</span>
-                                <span>{r[p.scoreColumn] ?? "—"}</span>
-                              </div>
-                            ))}
+                            {GROWTH_PILLARS.map((p) => {
+                              const val = r[p.scoreColumn];
+                              return (
+                                <div key={p.key} className="growthMonthPillarChip">
+                                  <span className="growthMonthPillarChipLabel">{p.label}</span>
+                                  <span style={val != null ? { color: colorFor(val * 10), fontWeight: 800 } : undefined}>
+                                    {val ?? "—"}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                           {(r.pain_note || r.life_reflection) && (
                             <div className="growthMonthNotes">
@@ -576,12 +582,17 @@ export default function Pillars() {
                   <ScoreBadge score={r.overall_score} size="sm" />
                 </div>
                 <div className="growthPillarGrid growthPillarGridCompact">
-                  {GROWTH_PILLARS.map((p) => (
-                    <div key={p.key} className="growthMonthPillarChip">
-                      <span className="growthMonthPillarChipLabel">{p.label}</span>
-                      <span>{r[p.scoreColumn] ?? "—"}</span>
-                    </div>
-                  ))}
+                  {GROWTH_PILLARS.map((p) => {
+                    const val = r[p.scoreColumn];
+                    return (
+                      <div key={p.key} className="growthMonthPillarChip">
+                        <span className="growthMonthPillarChipLabel">{p.label}</span>
+                        <span style={val != null ? { color: colorFor(val * 10), fontWeight: 800 } : undefined}>
+                          {val ?? "—"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
                 {(r.pain_note || r.life_reflection) && (
                   <div className="growthMonthNotes">
