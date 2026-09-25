@@ -23,9 +23,13 @@ export type GrowthCheckIn = {
   score_work_money: number | null;
   goal_followthrough: number | null;
 
-  // The only two written fields kept forever (see constants.ts).
+  // Legacy permanent fields from an earlier iteration — no longer written
+  // by the app, but preserved on old rows so history isn't lost.
   pain_note: string | null;
   life_reflection: string | null;
+  // The one written field kept forever going forward (see constants.ts):
+  // optional, doesn't affect the score.
+  proud_of: string | null;
 
   created_at: string;
   updated_at: string;
@@ -98,8 +102,8 @@ export async function fetchGoalsForCheckIn(checkInId: string): Promise<GrowthGoa
 
 export type CheckInUpsertInput = Omit<
   GrowthCheckIn,
-  "id" | "created_at" | "updated_at"
-> & { id?: string };
+  "id" | "created_at" | "updated_at" | "pain_note" | "life_reflection"
+> & { id?: string; pain_note?: string | null; life_reflection?: string | null };
 
 export async function upsertCheckIn(input: CheckInUpsertInput): Promise<GrowthCheckIn> {
   const { data, error } = await supabase
@@ -196,5 +200,96 @@ export async function saveLongTermGoals(memberId: string, content: string): Prom
   const { error } = await supabase
     .from("growth_long_term_goals")
     .upsert({ member_id: memberId, content }, { onConflict: "member_id" });
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// growth_tasks: 'weekly' small tasks (tied to a check-in) and 'daily'
+// to-dos (not tied to any check-in) — both surfaced on the Home tab.
+// ---------------------------------------------------------------------
+export type GrowthTask = {
+  id: string;
+  member_id: string;
+  kind: "weekly" | "daily";
+  check_in_id: string | null;
+  task_text: string;
+  completed: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function fetchWeeklyTasks(checkInId: string): Promise<GrowthTask[]> {
+  const { data, error } = await supabase
+    .from("growth_tasks")
+    .select("*")
+    .eq("check_in_id", checkInId)
+    .eq("kind", "weekly")
+    .order("sort_order", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as GrowthTask[];
+}
+
+/** Replaces all 'weekly' tasks for a check-in (mirrors replaceGoals). */
+export async function replaceWeeklyTasks(
+  checkInId: string,
+  memberId: string,
+  tasks: { task_text: string; sort_order: number }[]
+): Promise<void> {
+  const { error: delErr } = await supabase
+    .from("growth_tasks")
+    .delete()
+    .eq("check_in_id", checkInId)
+    .eq("kind", "weekly");
+  if (delErr) throw delErr;
+
+  const rows = tasks
+    .filter((t) => t.task_text.trim().length > 0)
+    .map((t) => ({
+      member_id: memberId,
+      check_in_id: checkInId,
+      kind: "weekly" as const,
+      task_text: t.task_text.trim(),
+      sort_order: t.sort_order,
+    }));
+  if (rows.length === 0) return;
+
+  const { error: insErr } = await supabase.from("growth_tasks").insert(rows);
+  if (insErr) throw insErr;
+}
+
+export async function fetchTasksForMember(
+  memberId: string,
+  kind: "weekly" | "daily"
+): Promise<GrowthTask[]> {
+  const { data, error } = await supabase
+    .from("growth_tasks")
+    .select("*")
+    .eq("member_id", memberId)
+    .eq("kind", kind)
+    .order("completed", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as GrowthTask[];
+}
+
+export async function addDailyTask(memberId: string, taskText: string): Promise<GrowthTask> {
+  const { data, error } = await supabase
+    .from("growth_tasks")
+    .insert({ member_id: memberId, kind: "daily", task_text: taskText.trim() })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as GrowthTask;
+}
+
+export async function setTaskCompleted(id: string, completed: boolean): Promise<void> {
+  const { error } = await supabase.from("growth_tasks").update({ completed }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  const { error } = await supabase.from("growth_tasks").delete().eq("id", id);
   if (error) throw error;
 }

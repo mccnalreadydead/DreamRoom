@@ -1,4 +1,4 @@
-import { SCORE_COLOR_BANDS, type TimeWindow } from "./constants";
+import { SCORE_COLOR_BANDS, GROWTH_PILLARS, type TimeWindow } from "./constants";
 
 /** Returns YYYY-MM-DD for the Monday of the week containing `date`. */
 export function weekStartMonday(date: Date): string {
@@ -7,6 +7,22 @@ export function weekStartMonday(date: Date): string {
   const diffToMonday = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diffToMonday);
   return toDateKey(d);
+}
+
+/** The lowest-average pillar across a set of scored rows, e.g. for a quick "focus area" glance. */
+export function lowestPillar(
+  rows: { [key: string]: any }[]
+): { label: string; avg: number } | null {
+  let lowest: { label: string; avg: number } | null = null;
+  for (const p of GROWTH_PILLARS) {
+    const values = rows
+      .map((r) => r[p.scoreColumn])
+      .filter((v): v is number => v != null);
+    if (values.length === 0) continue;
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    if (!lowest || avg < lowest.avg) lowest = { label: p.label, avg };
+  }
+  return lowest;
 }
 
 export function toDateKey(date: Date): string {

@@ -83,6 +83,8 @@ export const FOLLOWTHROUGH_ANCHOR_TEXT =
   "1 = barely did anything, 10 = crushed every one";
 
 export const MAX_GOALS_PER_CHECK_IN = 5;
+export const MAX_TASKS_PER_CHECK_IN = 5;
+export const PROUD_OF_MAX_LEN = 600;
 
 // Color bands applied to overall score, each pillar, and chart dots.
 export const SCORE_COLOR_BANDS = {

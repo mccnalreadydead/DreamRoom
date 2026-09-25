@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useActiveMember } from "../../growth/hooks/useActiveMember";
 import { useCheckInDraft } from "../../growth/hooks/useCheckInDraft";
 import MemberSwitcher from "../../growth/components/MemberSwitcher";
+import GrowthSubNav from "../../growth/components/GrowthSubNav";
 import ScoreBadge from "../../growth/components/ScoreBadge";
 import {
   GROWTH_PILLARS,
   MAX_GOALS_PER_CHECK_IN,
-  PAIN_NOTE_MAX_LEN,
-  LIFE_REFLECTION_MAX_LEN,
+  MAX_TASKS_PER_CHECK_IN,
+  PROUD_OF_MAX_LEN,
   PILLAR_ANCHOR_TEXT,
   FOLLOWTHROUGH_ANCHOR_TEXT,
 } from "../../growth/lib/constants";
@@ -18,19 +19,21 @@ import {
   fetchGoalsForCheckIn,
   fetchPriorCheckIn,
   fetchScoredCheckInById,
+  fetchWeeklyTasks,
   markGoalCompleted,
   replaceGoals,
+  replaceWeeklyTasks,
   upsertCheckIn,
   type GrowthCheckInScored,
   type GrowthGoal,
 } from "../../growth/lib/api";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import "./growth.css";
 
-// Score fields are the only thing kept forever alongside pain_note and
-// life_reflection (see constants.ts). Every other text field below
-// (per-pillar notes, proud-of, adjustments) is part of the in-the-moment
-// reflection process only and is intentionally NEVER sent to the database.
+// Pillar scores + proud_of are the only things kept forever (see
+// constants.ts). Every other text field below (per-pillar notes,
+// adjustments) is part of the in-the-moment reflection process only and
+// is intentionally NEVER sent to the database.
 type Draft = {
   scorePhysical: number | null;
   scoreMental: number | null;
@@ -38,17 +41,16 @@ type Draft = {
   scoreRelationships: number | null;
   scoreHabits: number | null;
   scoreWorkMoney: number | null;
-  painNote: string; // persisted
   noteMental: string; // ephemeral
   noteTimeEnergy: string; // ephemeral
   noteRelationships: string; // ephemeral
   noteHabits: string; // ephemeral
   noteWorkMoney: string; // ephemeral
   goalFollowthrough: number | null;
-  proudOf: string; // ephemeral
+  proudOf: string; // persisted, optional, doesn't affect score
   goals: string[];
+  tasks: string[]; // "small tasks this week" — persisted, shown on Home
   adjustments: string; // ephemeral
-  lifeReflection: string; // persisted
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -58,7 +60,6 @@ const EMPTY_DRAFT: Draft = {
   scoreRelationships: null,
   scoreHabits: null,
   scoreWorkMoney: null,
-  painNote: "",
   noteMental: "",
   noteTimeEnergy: "",
   noteRelationships: "",
@@ -67,8 +68,8 @@ const EMPTY_DRAFT: Draft = {
   goalFollowthrough: null,
   proudOf: "",
   goals: ["", "", "", "", ""],
+  tasks: ["", "", "", "", ""],
   adjustments: "",
-  lifeReflection: "",
 };
 
 const EPHEMERAL_NOTE_KEY: Record<string, keyof Draft> = {
@@ -187,13 +188,17 @@ export default function CheckIn() {
         score_habits: draft.scoreHabits,
         score_work_money: draft.scoreWorkMoney,
         goal_followthrough: hasPriorGoals ? draft.goalFollowthrough : null,
-        pain_note: draft.painNote.slice(0, PAIN_NOTE_MAX_LEN) || null,
-        life_reflection: draft.lifeReflection.slice(0, LIFE_REFLECTION_MAX_LEN) || null,
+        proud_of: draft.proudOf.slice(0, PROUD_OF_MAX_LEN) || null,
       });
       await replaceGoals(
         saved.id,
         activeMember.id,
         draft.goals.map((text, i) => ({ goal_text: text, sort_order: i }))
+      );
+      await replaceWeeklyTasks(
+        saved.id,
+        activeMember.id,
+        draft.tasks.map((text, i) => ({ task_text: text, sort_order: i }))
       );
       setExistingId(saved.id);
       const scored = await fetchScoredCheckInById(saved.id);
@@ -220,8 +225,7 @@ export default function CheckIn() {
       scoreHabits: summary.score_habits,
       scoreWorkMoney: summary.score_work_money,
       goalFollowthrough: summary.goal_followthrough,
-      painNote: summary.pain_note ?? "",
-      lifeReflection: summary.life_reflection ?? "",
+      proudOf: summary.proud_of ?? "",
     });
     (async () => {
       if (existingId) {
@@ -232,6 +236,14 @@ export default function CheckIn() {
             if (i < MAX_GOALS_PER_CHECK_IN) goals[i] = g.goal_text;
           });
           update({ goals });
+        }
+        const taskRows = await fetchWeeklyTasks(existingId);
+        if (taskRows.length > 0) {
+          const tasks = ["", "", "", "", ""];
+          taskRows.forEach((t, i) => {
+            if (i < MAX_TASKS_PER_CHECK_IN) tasks[i] = t.task_text;
+          });
+          update({ tasks });
         }
       }
     })();
@@ -262,12 +274,11 @@ export default function CheckIn() {
 
   return (
     <div className="growthPage">
+      <GrowthSubNav />
       <div className="growthHeaderRow">
         <div>
           <h1 className="growthTitle">Weekly Check-In</h1>
-          <div className="growthMuted">
-            Week of {weekStart} · <Link to="/growth/pillars" className="growthLinkPill">View Pillars →</Link>
-          </div>
+          <div className="growthMuted">Week of {weekStart}</div>
         </div>
         <MemberSwitcher activeSlug={activeSlug} onChange={setActiveSlug} />
       </div>
@@ -303,8 +314,13 @@ export default function CheckIn() {
               );
             })}
           </div>
-          {(summary.pain_note || summary.life_reflection) && (
+          {(summary.proud_of || summary.pain_note || summary.life_reflection) && (
             <div className="growthMonthNotes">
+              {summary.proud_of && (
+                <div>
+                  <strong>Proud of:</strong> {summary.proud_of}
+                </div>
+              )}
               {summary.pain_note && (
                 <div>
                   <strong>Pain note:</strong> {summary.pain_note}
@@ -411,29 +427,18 @@ export default function CheckIn() {
           ))}
 
           <section className="growthCard">
-            <h2 className="growthSectionTitle">Body pain</h2>
-            <div className="growthMuted">Any pain or discomfort this week? Saved permanently.</div>
-            <textarea
-              className="growthTextarea"
-              placeholder="e.g. lower back has been tight since Tuesday"
-              value={draft.painNote}
-              maxLength={PAIN_NOTE_MAX_LEN}
-              onChange={(e) => update({ painNote: e.target.value })}
-            />
-            <div className="growthCharCount">
-              {draft.painNote.length}/{PAIN_NOTE_MAX_LEN}
-            </div>
-          </section>
-
-          <section className="growthCard">
             <h2 className="growthSectionTitle">Proud of</h2>
-            <div className="growthMuted">For your reflection — not saved.</div>
+            <div className="growthMuted">Optional — saved permanently, doesn't affect your score.</div>
             <textarea
               className="growthTextarea"
               placeholder="What are you proud of this week?"
               value={draft.proudOf}
+              maxLength={PROUD_OF_MAX_LEN}
               onChange={(e) => update({ proudOf: e.target.value })}
             />
+            <div className="growthCharCount">
+              {draft.proudOf.length}/{PROUD_OF_MAX_LEN}
+            </div>
           </section>
 
           <section className="growthCard">
@@ -454,6 +459,26 @@ export default function CheckIn() {
           </section>
 
           <section className="growthCard">
+            <h2 className="growthSectionTitle">Small tasks this week</h2>
+            <div className="growthMuted">
+              What are some small tasks you'd like to accomplish? (e.g. "making an Amazon store") — shown on your Home screen.
+            </div>
+            {draft.tasks.map((t, i) => (
+              <input
+                key={i}
+                className="growthInput growthGoalInput"
+                placeholder={`Task ${i + 1}`}
+                value={t}
+                onChange={(e) => {
+                  const tasks = [...draft.tasks];
+                  tasks[i] = e.target.value;
+                  update({ tasks });
+                }}
+              />
+            ))}
+          </section>
+
+          <section className="growthCard">
             <h2 className="growthSectionTitle">Adjustments</h2>
             <div className="growthMuted">For your reflection — not saved.</div>
             <textarea
@@ -462,21 +487,6 @@ export default function CheckIn() {
               value={draft.adjustments}
               onChange={(e) => update({ adjustments: e.target.value })}
             />
-          </section>
-
-          <section className="growthCard">
-            <h2 className="growthSectionTitle">How's life going?</h2>
-            <div className="growthMuted">Saved permanently.</div>
-            <textarea
-              className="growthTextarea"
-              placeholder="Anything that stood out this week?"
-              value={draft.lifeReflection}
-              maxLength={LIFE_REFLECTION_MAX_LEN}
-              onChange={(e) => update({ lifeReflection: e.target.value })}
-            />
-            <div className="growthCharCount">
-              {draft.lifeReflection.length}/{LIFE_REFLECTION_MAX_LEN}
-            </div>
           </section>
 
           <button

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useActiveMember } from "../../growth/hooks/useActiveMember";
 import MemberSwitcher from "../../growth/components/MemberSwitcher";
+import GrowthSubNav from "../../growth/components/GrowthSubNav";
 import ScoreBadge from "../../growth/components/ScoreBadge";
 import PillarCard from "../../growth/components/PillarCard";
 import TrendChart from "../../growth/components/TrendChart";
@@ -31,7 +32,7 @@ import {
   type GrowthCheckInScored,
   type GrowthMember,
 } from "../../growth/lib/api";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import "./growth.css";
 
 type MemberSeries = {
@@ -110,7 +111,7 @@ export default function Pillars() {
   function handleEditWeek(row: GrowthCheckInScored) {
     const confirmed = window.confirm("Edit this week's check-in?");
     if (!confirmed) return;
-    navigate(`/growth?date=${row.check_in_date}&member=${activeSlug}`);
+    navigate(`/growth/check-in?date=${row.check_in_date}&member=${activeSlug}`);
   }
 
   const activeSeries = activeMember ? seriesByMember[activeMember.id] : undefined;
@@ -336,12 +337,10 @@ export default function Pillars() {
 
   return (
     <div className="growthPage">
+      <GrowthSubNav />
       <div className="growthHeaderRow">
         <div>
           <h1 className="growthTitle">Pillars</h1>
-          <div className="growthMuted">
-            Growth trends over time · <Link to="/growth" className="growthLinkPill">Weekly Check-In →</Link>
-          </div>
         </div>
         <MemberSwitcher activeSlug={activeSlug} onChange={setActiveSlug} />
       </div>

@@ -12,6 +12,31 @@
   color: rgba(255, 255, 255, 0.92);
 }
 
+/* Sub-nav: Home | Check In | Pillars */
+.growthSubNav {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 143, 42, 0.20);
+  background: rgba(0, 0, 0, 0.30);
+}
+.growthSubNavTab {
+  flex: 1 1 0;
+  text-align: center;
+  padding: 8px 10px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.70);
+}
+.growthSubNavTab.active {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255, 143, 42, 0.32), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 0 16px rgba(255, 143, 42, 0.30);
+}
+
 .growthHeaderRow {
   display: flex;
   align-items: flex-start;
@@ -577,6 +602,73 @@
 }
 .growthGoalsSaveBtn {
   align-self: flex-start;
+}
+
+/* Home page */
+.growthHomeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 720px) {
+  .growthHomeGrid {
+    grid-template-columns: 1fr;
+  }
+}
+.growthHomeMemberCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.growthHomeSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.growthHomeSectionLabel {
+  font-weight: 800;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgba(255, 168, 84, 0.85);
+}
+.growthHomeFocusCallout {
+  font-size: 12.5px;
+  padding: 10px 12px;
+}
+.growthHomeAddRow {
+  display: flex;
+  gap: 8px;
+}
+.growthHomeAddRow .growthInput {
+  flex: 1 1 auto;
+}
+.growthHomeTaskRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.growthHomeTaskList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.growthHomeDoneDetails {
+  margin-top: 4px;
+}
+.growthHomeDoneDetails .growthGoalsSummary {
+  cursor: pointer;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  list-style: none;
+}
+.growthHomeDoneDetails .growthGoalsSummary::-webkit-details-marker {
+  display: none;
 }
 
 /* =========================================================

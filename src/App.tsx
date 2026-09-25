@@ -13,6 +13,7 @@ const SalesMetrics = lazy(() => import("./pages/SalesMetrics"));
 const ItemSalesByMonth = lazy(() => import("./pages/ItemSalesByMonth"));
 const GrowthCheckIn = lazy(() => import("./pages/growth/CheckIn"));
 const GrowthPillars = lazy(() => import("./pages/growth/Pillars"));
+const GrowthHome = lazy(() => import("./pages/growth/Home"));
 
 export default function App() {
   return (
@@ -26,7 +27,8 @@ export default function App() {
           <Route path="item-sales" element={<ItemSalesByMonth />} />
           <Route path="tracking" element={<Tracking />} />
           <Route path="new-product" element={<NewProduct />} />
-          <Route path="growth" element={<GrowthCheckIn />} />
+          <Route path="growth" element={<GrowthHome />} />
+          <Route path="growth/check-in" element={<GrowthCheckIn />} />
           <Route path="growth/pillars" element={<GrowthPillars />} />
         </Route>
 
