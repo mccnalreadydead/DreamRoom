@@ -18,9 +18,11 @@ alter table growth_check_ins
     check (proud_of is null or char_length(proud_of) <= 600);
 
 -- growth_check_in_scores selects ci.*, which Postgres resolves to a fixed
--- column list at view-creation time — it must be recreated so the new
--- proud_of column is exposed through the API.
-create or replace view growth_check_in_scores as
+-- column list at view-creation time. Adding proud_of via ci.* shifts the
+-- position of every column after it, so `create or replace` fails with
+-- "cannot change name of view column" — drop and recreate it instead.
+drop view if exists growth_check_in_scores;
+create view growth_check_in_scores as
 select
   ci.*,
   round(avg(v.val) * 10) as overall_score,
