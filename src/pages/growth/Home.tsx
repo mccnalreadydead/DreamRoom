@@ -148,7 +148,7 @@ export default function Home() {
 
       {error && <div className="growthError">{error}</div>}
       {memberError && <div className="growthError">Couldn't load profiles ({memberError}).</div>}
-      {(memberLoading || loading) && <div className="growthMuted">Loading…</div>}
+      {(memberLoading || (loading && !data)) && <div className="growthMuted">Loading…</div>}
 
       <div className="growthCard growthHomeMemberCard">
         {/* Focus area — always visible */}
