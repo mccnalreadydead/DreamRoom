@@ -84,6 +84,7 @@ export const FOLLOWTHROUGH_ANCHOR_TEXT =
 
 export const MAX_GOALS_PER_CHECK_IN = 5;
 export const MAX_TASKS_PER_CHECK_IN = 5;
+export const MAX_HABITS_PER_CHECK_IN = 3;
 export const PROUD_OF_MAX_LEN = 600;
 
 // Color bands applied to overall score, each pillar, and chart dots.

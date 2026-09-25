@@ -293,3 +293,100 @@ export async function deleteTask(id: string): Promise<void> {
   const { error } = await supabase.from("growth_tasks").delete().eq("id", id);
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------
+// growth_habits / growth_habit_logs: exactly 3 habit slots per check-in,
+// each with a per-day on/off log (Home tab day-dot rows).
+// ---------------------------------------------------------------------
+export type GrowthHabit = {
+  id: string;
+  member_id: string;
+  check_in_id: string;
+  habit_text: string;
+  sort_order: number;
+  created_at: string;
+};
+
+export type GrowthHabitLog = {
+  id: string;
+  habit_id: string;
+  member_id: string;
+  log_date: string;
+  status: "on" | "off";
+  created_at: string;
+  updated_at: string;
+};
+
+export async function fetchHabitsForCheckIn(checkInId: string): Promise<GrowthHabit[]> {
+  const { data, error } = await supabase
+    .from("growth_habits")
+    .select("*")
+    .eq("check_in_id", checkInId)
+    .order("sort_order", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as GrowthHabit[];
+}
+
+/**
+ * Habits are a fixed commitment for the week they're set in — this only
+ * inserts them the first time a check-in is saved (if none exist yet).
+ * It never deletes/replaces existing habit rows, so day-logs tied to them
+ * (via FK cascade) are never lost by re-saving the same check-in.
+ */
+export async function ensureHabitsForCheckIn(
+  checkInId: string,
+  memberId: string,
+  habitTexts: string[]
+): Promise<void> {
+  const existing = await fetchHabitsForCheckIn(checkInId);
+  if (existing.length > 0) return;
+
+  const rows = habitTexts
+    .map((text, i) => ({ text: text.trim(), sort_order: i }))
+    .filter((h) => h.text.length > 0)
+    .map((h) => ({
+      member_id: memberId,
+      check_in_id: checkInId,
+      habit_text: h.text,
+      sort_order: h.sort_order,
+    }));
+  if (rows.length === 0) return;
+
+  const { error } = await supabase.from("growth_habits").insert(rows);
+  if (error) throw error;
+}
+
+export async function fetchHabitLogs(habitIds: string[]): Promise<GrowthHabitLog[]> {
+  if (habitIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("growth_habit_logs")
+    .select("*")
+    .in("habit_id", habitIds);
+  if (error) throw error;
+  return (data ?? []) as GrowthHabitLog[];
+}
+
+/** Cycles a day's status: null (blank) -> 'on' -> 'off' -> null. Pass the next status explicitly. */
+export async function setHabitLogStatus(
+  habitId: string,
+  memberId: string,
+  logDate: string,
+  status: "on" | "off" | null
+): Promise<void> {
+  if (status === null) {
+    const { error } = await supabase
+      .from("growth_habit_logs")
+      .delete()
+      .eq("habit_id", habitId)
+      .eq("log_date", logDate);
+    if (error) throw error;
+    return;
+  }
+  const { error } = await supabase
+    .from("growth_habit_logs")
+    .upsert(
+      { habit_id: habitId, member_id: memberId, log_date: logDate, status },
+      { onConflict: "habit_id,log_date" }
+    );
+  if (error) throw error;
+}

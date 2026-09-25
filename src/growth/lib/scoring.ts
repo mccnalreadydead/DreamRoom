@@ -37,6 +37,17 @@ export function parseDateKey(key: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+export const DAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"] as const;
+export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+
+/** The 7 date keys (Mon..Sun) for the week starting at `weekStart`. */
+export function weekDates(weekStart: string): string[] {
+  const start = parseDateKey(weekStart);
+  return Array.from({ length: 7 }, (_, i) =>
+    toDateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i))
+  );
+}
+
 export type ColorBand = keyof typeof SCORE_COLOR_BANDS;
 
 export function colorBandFor(score: number | null | undefined): ColorBand | null {

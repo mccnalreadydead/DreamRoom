@@ -671,6 +671,103 @@
   display: none;
 }
 
+/* Habit trackers — the visual anchor of the Home page: a distinct,
+   slightly elevated block so it stands out from the plainer lists. */
+.growthHomeHabitsSection {
+  background: rgba(255, 143, 42, 0.06);
+  border: 1px solid rgba(255, 143, 42, 0.22);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+.growthHabitTrackerRow,
+.growthHabitHistoryRow {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.growthHabitTrackerRow:last-child,
+.growthHabitHistoryRow:last-child {
+  border-bottom: none;
+}
+.growthHabitTrackerText,
+.growthHabitHistoryText {
+  font-weight: 800;
+  font-size: 13.5px;
+  margin-bottom: 6px;
+}
+.growthHabitDots {
+  display: flex;
+  gap: 6px;
+}
+.growthHabitDot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.30);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.growthHabitDotTap {
+  cursor: pointer;
+}
+.growthHabitDot-on {
+  border-color: #3ddc84;
+  background: rgba(61, 220, 132, 0.25);
+  color: #3ddc84;
+}
+.growthHabitDot-off {
+  border-color: #ff5b5b;
+  background: rgba(255, 91, 91, 0.20);
+  color: #ff5b5b;
+}
+.growthHabitTotals {
+  margin-top: 4px;
+}
+
+/* De-emphasized sections (small tasks, daily to-dos) so the habit
+   trackers and goals visually lead the page. */
+.growthHomeMinorSection {
+  opacity: 0.88;
+}
+.growthHomeSectionLabelMinor {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.growthHomeDailyDetails > summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.45);
+  list-style: none;
+}
+.growthHomeDailyDetails > summary::-webkit-details-marker {
+  display: none;
+}
+.growthHomeDailyDetails[open] > summary {
+  margin-bottom: 8px;
+}
+.growthHomeDailyDetails .growthHomeAddRow {
+  margin-top: 8px;
+}
+
+/* Habit history shown in next week's Check-In (read-only, above the score) */
+.growthHabitHistory {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.20);
+  border-radius: 12px;
+}
+.growthHabitLocked {
+  margin-top: 8px;
+}
+
 /* =========================================================
    Mobile responsiveness pass (item 2): no horizontal scroll,
    larger tap targets, selectors that stay readable, textareas
@@ -771,6 +868,15 @@
   }
   .growthPillarGridCompact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Habit dots: still one tap target per day, just slightly tighter. */
+  .growthHabitDots {
+    gap: 4px;
+  }
+  .growthHabitDot {
+    width: 30px;
+    height: 30px;
   }
 }
 

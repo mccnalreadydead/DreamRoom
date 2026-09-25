@@ -8,15 +8,19 @@ import {
   GROWTH_PILLARS,
   MAX_GOALS_PER_CHECK_IN,
   MAX_TASKS_PER_CHECK_IN,
+  MAX_HABITS_PER_CHECK_IN,
   PROUD_OF_MAX_LEN,
   PILLAR_ANCHOR_TEXT,
   FOLLOWTHROUGH_ANCHOR_TEXT,
 } from "../../growth/lib/constants";
-import { toDateKey, weekStartMonday, colorFor } from "../../growth/lib/scoring";
+import { toDateKey, weekStartMonday, colorFor, weekDates, DAY_LABELS, DAY_NAMES } from "../../growth/lib/scoring";
 import {
   deleteCheckIn,
+  ensureHabitsForCheckIn,
   fetchCheckInForWeek,
   fetchGoalsForCheckIn,
+  fetchHabitLogs,
+  fetchHabitsForCheckIn,
   fetchPriorCheckIn,
   fetchScoredCheckInById,
   fetchWeeklyTasks,
@@ -26,6 +30,7 @@ import {
   upsertCheckIn,
   type GrowthCheckInScored,
   type GrowthGoal,
+  type GrowthHabit,
 } from "../../growth/lib/api";
 import { useSearchParams } from "react-router-dom";
 import "./growth.css";
@@ -44,12 +49,12 @@ type Draft = {
   noteMental: string; // ephemeral
   noteTimeEnergy: string; // ephemeral
   noteRelationships: string; // ephemeral
-  noteHabits: string; // ephemeral
   noteWorkMoney: string; // ephemeral
   goalFollowthrough: number | null;
   proudOf: string; // persisted, optional, doesn't affect score
   goals: string[];
   tasks: string[]; // "small tasks this week" — persisted, shown on Home
+  habits: string[]; // exactly 3 slots, persisted, tracked daily on Home
   adjustments: string; // ephemeral
 };
 
@@ -63,12 +68,12 @@ const EMPTY_DRAFT: Draft = {
   noteMental: "",
   noteTimeEnergy: "",
   noteRelationships: "",
-  noteHabits: "",
   noteWorkMoney: "",
   goalFollowthrough: null,
   proudOf: "",
   goals: ["", "", "", "", ""],
   tasks: ["", "", "", "", ""],
+  habits: Array(MAX_HABITS_PER_CHECK_IN).fill(""),
   adjustments: "",
 };
 
@@ -76,7 +81,6 @@ const EPHEMERAL_NOTE_KEY: Record<string, keyof Draft> = {
   mental: "noteMental",
   time_energy: "noteTimeEnergy",
   relationships: "noteRelationships",
-  habits: "noteHabits",
   work_money: "noteWorkMoney",
 };
 const SCORE_KEY: Record<string, keyof Draft> = {
@@ -117,6 +121,14 @@ export default function CheckIn() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Last week's 3 habits with their day-by-day on/off breakdown, shown
+  // above this week's Habits score input.
+  const [priorHabits, setPriorHabits] = useState<
+    { habit_text: string; days: (("on" | "off") | null)[]; onCount: number; offCount: number }[]
+  >([]);
+  // This week's own habits, once set (locked in — see ensureHabitsForCheckIn).
+  const [thisWeekHabits, setThisWeekHabits] = useState<GrowthHabit[]>([]);
+
   // Once a week is submitted we show a read-only summary instead of the form.
   // "Edit" flips this back to false and re-populates the form from the record.
   const [summary, setSummary] = useState<GrowthCheckInScored | null>(null);
@@ -139,16 +151,43 @@ export default function CheckIn() {
         setPriorGoals(priorGoalsRows);
         setGoalDone(Object.fromEntries(priorGoalsRows.map((g) => [g.id, g.completed ?? false])));
 
+        if (prior) {
+          const priorHabitRows = await fetchHabitsForCheckIn(prior.id);
+          const logs = await fetchHabitLogs(priorHabitRows.map((h) => h.id));
+          const dates = weekDates(prior.week_start);
+          if (!cancelled) {
+            setPriorHabits(
+              priorHabitRows.map((h) => {
+                const days = dates.map((d) => {
+                  const log = logs.find((l) => l.habit_id === h.id && l.log_date === d);
+                  return (log?.status as "on" | "off" | undefined) ?? null;
+                });
+                return {
+                  habit_text: h.habit_text,
+                  days,
+                  onCount: days.filter((s) => s === "on").length,
+                  offCount: days.filter((s) => s === "off").length,
+                };
+              })
+            );
+          }
+        } else if (!cancelled) {
+          setPriorHabits([]);
+        }
+
         if (existing) {
           setExistingId(existing.id);
           const scored = await fetchScoredCheckInById(existing.id);
+          const habitRows = await fetchHabitsForCheckIn(existing.id);
           if (!cancelled) {
             setSummary(scored);
+            setThisWeekHabits(habitRows);
             setShowForm(false);
           }
         } else {
           setExistingId(null);
           setSummary(null);
+          setThisWeekHabits([]);
           setShowForm(true);
         }
       } catch (e: any) {
@@ -200,9 +239,12 @@ export default function CheckIn() {
         activeMember.id,
         draft.tasks.map((text, i) => ({ task_text: text, sort_order: i }))
       );
+      await ensureHabitsForCheckIn(saved.id, activeMember.id, draft.habits);
       setExistingId(saved.id);
       const scored = await fetchScoredCheckInById(saved.id);
+      const habitRows = await fetchHabitsForCheckIn(saved.id);
       setSummary(scored);
+      setThisWeekHabits(habitRows);
       setShowForm(false);
       setDraft(EMPTY_DRAFT); // fully reset the form now that it's submitted
       setSaveState("idle");
@@ -263,6 +305,7 @@ export default function CheckIn() {
       setExistingId(null);
       setSummary(null);
       setPriorGoals([]);
+      setThisWeekHabits([]);
       setDraft(EMPTY_DRAFT);
       setShowForm(true);
     } catch (e: any) {
@@ -410,18 +453,76 @@ export default function CheckIn() {
             <section key={pillar.key} className="growthCard">
               <h2 className="growthSectionTitle">{pillar.label}</h2>
               <div className="growthMuted">{pillar.description}</div>
+
+              {pillar.key === "habits" && priorHabits.length > 0 && (
+                <div className="growthHabitHistory">
+                  {priorHabits.map((h, i) => (
+                    <div key={i} className="growthHabitHistoryRow">
+                      <div className="growthHabitHistoryText">{h.habit_text}</div>
+                      <div className="growthHabitDots">
+                        {h.days.map((status, di) => (
+                          <span
+                            key={di}
+                            className={`growthHabitDot${status ? ` growthHabitDot-${status}` : ""}`}
+                            title={`${DAY_NAMES[di]}: ${status === "on" ? "on track" : status === "off" ? "off track" : "not logged"}`}
+                          >
+                            {DAY_LABELS[di]}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="growthMuted growthHabitTotals">
+                        {h.onCount} day{h.onCount === 1 ? "" : "s"} on track · {h.offCount} off
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="growthMuted">{PILLAR_ANCHOR_TEXT}</div>
               <ScoreSlider
                 value={draft[SCORE_KEY[pillar.key]] as number | null}
                 onChange={(v) => update({ [SCORE_KEY[pillar.key]]: v } as Partial<Draft>)}
               />
-              {pillar.key !== "physical" && (
-                <textarea
-                  className="growthTextarea"
-                  placeholder={`Notes on ${pillar.label.toLowerCase()} (for your reflection — not saved)`}
-                  value={draft[EPHEMERAL_NOTE_KEY[pillar.key]] as string}
-                  onChange={(e) => update({ [EPHEMERAL_NOTE_KEY[pillar.key]]: e.target.value } as Partial<Draft>)}
-                />
+              {pillar.key === "habits" ? (
+                thisWeekHabits.length > 0 ? (
+                  <div className="growthHabitLocked">
+                    <div className="growthMuted">This week's habits (locked in for the week):</div>
+                    <ul className="growthGoalList">
+                      {thisWeekHabits.map((h) => (
+                        <li key={h.id}>{h.habit_text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <>
+                    <div className="growthMuted">
+                      Exactly 3 habits or goals to track daily this week (tap them on Home each day).
+                    </div>
+                    {draft.habits.map((t, i) => (
+                      <input
+                        key={i}
+                        className="growthInput growthGoalInput"
+                        placeholder={`Habit ${i + 1}`}
+                        value={t}
+                        maxLength={80}
+                        onChange={(e) => {
+                          const habits = [...draft.habits];
+                          habits[i] = e.target.value;
+                          update({ habits });
+                        }}
+                      />
+                    ))}
+                  </>
+                )
+              ) : (
+                pillar.key !== "physical" && (
+                  <textarea
+                    className="growthTextarea"
+                    placeholder={`Notes on ${pillar.label.toLowerCase()} (for your reflection — not saved)`}
+                    value={draft[EPHEMERAL_NOTE_KEY[pillar.key]] as string}
+                    onChange={(e) => update({ [EPHEMERAL_NOTE_KEY[pillar.key]]: e.target.value } as Partial<Draft>)}
+                  />
+                )
               )}
             </section>
           ))}
