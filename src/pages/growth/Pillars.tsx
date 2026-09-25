@@ -362,7 +362,7 @@ export default function Pillars() {
         <div className="growthGoalsFooter">
           <button
             type="button"
-            className="growthBtnPrimary growthGoalsSaveBtn"
+            className="growthGoalsSaveBtn"
             onClick={handleSaveGoals}
             disabled={goalsSaveState === "saving" || !goalsLoaded}
           >
